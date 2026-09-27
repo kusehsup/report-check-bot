@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Any, Iterable
 
-from bot.models import AdminReply, ReviewCard
+from bot.models import AdminReply, DialogueLine, ReviewCard
 
 _DT_FULL = re.compile(
     r"(?P<date>\d{4}-\d{2}-\d{2})[ T](?P<time>\d{2}:\d{2}(?::\d{2})?)"
@@ -383,36 +383,124 @@ def _card_id(answer_type: str, answered_at: str, admin: str, question: str, answ
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _sender_id(obj: dict[str, Any]) -> str:
+    return _first_str(
+        obj,
+        (
+            "senderId",
+            "sender_id",
+            "authorId",
+            "author_id",
+            "accountId",
+            "account_id",
+        ),
+    )
+
+
+def _sender_name(obj: dict[str, Any]) -> str:
+    return _first_str(
+        obj,
+        (
+            "senderName",
+            "sender_name",
+            "authorName",
+            "author_name",
+            "adminName",
+            "admin_name",
+            "name",
+        ),
+    ) or _admin_of(obj)
+
+
+def _is_player_reply(
+    msg: dict[str, Any],
+    *,
+    player_id: str,
+    player_name: str,
+) -> bool:
+    """z-request answers[] mixes player follow-ups and agent replies."""
+    sid = _sender_id(msg)
+    if player_id and sid and sid == player_id:
+        return True
+    # Prefer id match; name fallback only when ids missing.
+    if not player_id and not sid:
+        sname = _sender_name(msg)
+        if player_name and sname and sname.lower() == player_name.lower():
+            return True
+    return False
+
+
+def _message_text(obj: dict[str, Any]) -> str:
+    return _answer_text_of(obj) or _first_str(obj, ("message", "text", "content"))
+
+
 def _cards_from_thread(thread: dict[str, Any], answer_type: str) -> list[ReviewCard]:
     question = _question_of(thread)
     player_name, player_id = _player_fields(thread)
+    # FAQ uses authorId/authorName at the top level.
+    if not player_id:
+        player_id = _first_str(thread, ("authorId", "author_id"))
+    if not player_name or player_name == "—":
+        player_name = _first_str(thread, ("authorName", "author_name")) or player_name
     thread_time = _thread_time(thread)
     fallback_date = _date_part(thread_time)
 
     answers = _answers_of(thread)
     if not answers:
-        # unanswered report — skip, nothing to judge
+        # unanswered — skip, nothing to judge
         return []
 
-    parsed: list[tuple[str, str, str]] = []
-    for answer in answers:
-        admin = _admin_of(answer) or _admin_of(thread)
-        text = _answer_text_of(answer)
-        if not text and not admin:
+    dialogue: list[DialogueLine] = []
+    if question:
+        dialogue.append(
+            DialogueLine(
+                role="player",
+                name=player_name or "—",
+                text=question,
+                at=thread_time or "",
+            )
+        )
+
+    # (role, name, text, when) — every chat line after the opener
+    agent_indices: list[int] = []  # indices into agent_answers
+    agent_answers: list[tuple[str, str, str]] = []  # name, text, when
+
+    for raw in answers:
+        text = _message_text(raw)
+        when = _answer_time(raw, fallback_date=fallback_date) or thread_time
+        if _is_player_reply(raw, player_id=player_id, player_name=player_name):
+            name = _sender_name(raw) or player_name or "—"
+            if not text:
+                continue
+            dialogue.append(
+                DialogueLine(role="player", name=name, text=text, at=when or "")
+            )
             continue
-        when = _answer_time(answer, fallback_date=fallback_date) or thread_time
-        parsed.append((admin or "—", text or "—", when))
+
+        name = _sender_name(raw) or _admin_of(thread) or "—"
+        if not text and name == "—":
+            continue
+        text = text or "—"
+        when = when or thread_time or ""
+        dialogue.append(
+            DialogueLine(role="agent", name=name, text=text, at=when)
+        )
+        agent_indices.append(len(dialogue) - 1)
+        agent_answers.append((name, text, when))
+
+    if not agent_answers:
+        return []
 
     cards: list[ReviewCard] = []
-    for idx, (admin, text, when) in enumerate(parsed):
+    for idx, (admin, text, when) in enumerate(agent_answers):
         siblings = [
             AdminReply(admin_name=a, text=t, answered_at=w)
-            for j, (a, t, w) in enumerate(parsed)
+            for j, (a, t, w) in enumerate(agent_answers)
             if j != idx
         ]
         cards.append(
             ReviewCard(
-                card_id=_card_id(answer_type, when, admin, question, text),
+                card_id=_card_id(answer_type, when, admin, question or "—", text),
                 answer_type=answer_type,
                 answered_at=when or thread_time,
                 player_name=player_name or "—",
@@ -421,6 +509,7 @@ def _cards_from_thread(thread: dict[str, Any], answer_type: str) -> list[ReviewC
                 admin_name=admin,
                 answer=text,
                 sibling_replies=siblings,
+                dialogue=list(dialogue),
             )
         )
     return cards
@@ -610,23 +699,97 @@ def type_label(answer_type: str) -> str:
     return _TYPE_LABELS.get(answer_type, answer_type)
 
 
+def _short_time(value: str) -> str:
+    if len(value) >= 19 and value[10] == " ":
+        return value[11:16]  # HH:MM
+    if len(value) >= 5 and value[2] == ":":
+        return value[:5]
+    return value
+
+
+def _clip(text: str, limit: int = 220) -> str:
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 3] + "..."
+
+
 def format_card_text(card: ReviewCard, index: int, total: int) -> str:
     lines = [
         f"{type_label(card.answer_type)} · {index}/{total}",
         card.answered_at,
         "",
         f"Игрок: {card.player_name} [{card.player_id}]",
-        f"Вопрос: {card.question}",
         "",
-        f"Ответ: {card.admin_name}",
-        card.answer,
+        f">>> Проверяется ответ агента: {card.admin_name}",
+        f">>> {_clip(card.answer, 280)}",
+        "",
     ]
+
+    if card.dialogue:
+        lines.append("Диалог:")
+        # Prefer full dialogue; if huge, keep opener + window around current answer.
+        dialogue = card.dialogue
+        max_lines = 16
+        if len(dialogue) > max_lines:
+            current_idx = None
+            for i, line in enumerate(dialogue):
+                if (
+                    line.role == "agent"
+                    and line.name == card.admin_name
+                    and line.text == card.answer
+                    and (not card.answered_at or line.at == card.answered_at or not line.at)
+                ):
+                    current_idx = i
+                    break
+            if current_idx is None:
+                for i, line in enumerate(dialogue):
+                    if (
+                        line.role == "agent"
+                        and line.name == card.admin_name
+                        and line.text == card.answer
+                    ):
+                        current_idx = i
+                        break
+            if current_idx is None:
+                dialogue = dialogue[:1] + dialogue[-(max_lines - 1) :]
+            else:
+                start = max(1, current_idx - 6)
+                end = min(len(card.dialogue), current_idx + 3)
+                dialogue = [card.dialogue[0]]
+                if start > 1:
+                    dialogue.append(
+                        DialogueLine(role="player", name="…", text="…", at="")
+                    )
+                dialogue.extend(card.dialogue[start:end])
+
+        for line in dialogue:
+            if line.name == "…" and line.text == "…":
+                lines.append("  …")
+                continue
+            role = "Игрок" if line.role == "player" else "Агент"
+            stamp = _short_time(line.at)
+            prefix = f"[{stamp}] " if stamp else ""
+            marker = ""
+            if (
+                line.role == "agent"
+                and line.name == card.admin_name
+                and line.text == card.answer
+            ):
+                marker = "  ← этот ответ"
+            lines.append(f"{prefix}{role} {line.name}:{marker}")
+            lines.append(f"  {_clip(line.text)}")
+    else:
+        lines.append(f"Вопрос: {card.question}")
+        lines.append("")
+        lines.append(f"Ответ: {card.admin_name}")
+        lines.append(card.answer)
+
     if card.sibling_replies:
         lines.append("")
-        lines.append("Ещё на этот вопрос:")
+        lines.append("Другие ответы агентов (отдельные карточки):")
         for reply in card.sibling_replies[:8]:
-            snippet = " ".join(reply.text.split())
-            if len(snippet) > 80:
-                snippet = snippet[:77] + "..."
-            lines.append(f"• {reply.admin_name} — {snippet}")
+            stamp = _short_time(reply.answered_at)
+            when = f" · {stamp}" if stamp else ""
+            lines.append(f"• {reply.admin_name}{when} — {_clip(reply.text, 70)}")
     return "\n".join(lines)

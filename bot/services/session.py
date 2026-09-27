@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from bot.models import AdminReply, ReviewCard
+from bot.models import AdminReply, DialogueLine, ReviewCard
 
 
 @dataclass
@@ -74,6 +74,7 @@ class SessionStore:
                     "admin_name": card.admin_name,
                     "answer": card.answer,
                     "sibling_replies": [asdict(r) for r in card.sibling_replies],
+                    "dialogue": [asdict(d) for d in card.dialogue],
                 }
             )
         return json.dumps(payload, ensure_ascii=False)
@@ -91,6 +92,15 @@ class SessionStore:
                 )
                 for s in item.get("sibling_replies") or []
             ]
+            dialogue = [
+                DialogueLine(
+                    role=d.get("role", "agent"),
+                    name=d.get("name", "—"),
+                    text=d.get("text", ""),
+                    at=d.get("at", ""),
+                )
+                for d in item.get("dialogue") or []
+            ]
             cards.append(
                 ReviewCard(
                     card_id=item["card_id"],
@@ -102,6 +112,7 @@ class SessionStore:
                     admin_name=item["admin_name"],
                     answer=item["answer"],
                     sibling_replies=siblings,
+                    dialogue=dialogue,
                 )
             )
         return cards

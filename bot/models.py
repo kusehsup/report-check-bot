@@ -5,14 +5,26 @@ from dataclasses import dataclass, field
 
 @dataclass(slots=True)
 class AdminReply:
+    """Another agent answer in the same thread (separate review card)."""
+
     admin_name: str
     text: str
     answered_at: str  # "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS"
 
 
 @dataclass(slots=True)
+class DialogueLine:
+    """One line of the z-request / report dialogue."""
+
+    role: str  # player | agent
+    name: str
+    text: str
+    at: str  # "YYYY-MM-DD HH:MM:SS" or ""
+
+
+@dataclass(slots=True)
 class ReviewCard:
-    """One admin answer ready for review / sheet append."""
+    """One admin/agent answer ready for review / sheet append."""
 
     card_id: str
     answer_type: str  # FAQ | Report
@@ -23,6 +35,7 @@ class ReviewCard:
     admin_name: str
     answer: str
     sibling_replies: list[AdminReply] = field(default_factory=list)
+    dialogue: list[DialogueLine] = field(default_factory=list)
 
     def sheet_row(self, verdict: str) -> list[str]:
         return [
