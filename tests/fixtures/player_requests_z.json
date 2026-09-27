@@ -1,0 +1,78 @@
+[
+  {
+    "id": 278527,
+    "authorId": 1671159,
+    "authorName": "Bernaba_Casamento",
+    "message": "Васколько рестарт?",
+    "status": 1,
+    "time": "2026-09-27 23:52:29",
+    "answers": [
+      {
+        "time": "2026-09-27 23:52:59",
+        "questionId": 278527,
+        "senderId": 1255785,
+        "senderName": "Daniel_Shevch",
+        "message": "Рестарт происходит в 6:04 по МСК"
+      }
+    ]
+  },
+  {
+    "id": 278524,
+    "authorId": 221401,
+    "authorName": "Vova_Beloysov",
+    "message": "как починить броник",
+    "status": 1,
+    "time": "2026-09-27 23:48:27",
+    "answers": [
+      {
+        "time": "2026-09-27 23:48:57",
+        "questionId": 278524,
+        "senderId": 1291151,
+        "senderName": "Artem_Bariga",
+        "message": "нужна бронепластина и на станке починить, станок в гаражах можно найти"
+      },
+      {
+        "time": "2026-09-27 23:53:59",
+        "questionId": 278524,
+        "senderId": 221401,
+        "senderName": "Vova_Beloysov",
+        "message": "где взять ключ для кейса?"
+      },
+      {
+        "time": "2026-09-27 23:54:28",
+        "questionId": 278524,
+        "senderId": 1255785,
+        "senderName": "Daniel_Shevch",
+        "message": "Купить или получить с робот"
+      },
+      {
+        "time": "2026-09-27 23:54:46",
+        "questionId": 278524,
+        "senderId": 221401,
+        "senderName": "Vova_Beloysov",
+        "message": "а где купить его???"
+      },
+      {
+        "time": "2026-09-27 23:55:11",
+        "questionId": 278524,
+        "senderId": 1255785,
+        "senderName": "Daniel_Shevch",
+        "message": "На киосках"
+      },
+      {
+        "time": "2026-09-27 23:55:43",
+        "questionId": 278524,
+        "senderId": 221401,
+        "senderName": "Vova_Beloysov",
+        "message": "а за донат как то можно купить?"
+      },
+      {
+        "time": "2026-09-27 23:56:08",
+        "questionId": 278524,
+        "senderId": 1255785,
+        "senderName": "Daniel_Shevch",
+        "message": "Только открытие кейс"
+      }
+    ]
+  }
+]
