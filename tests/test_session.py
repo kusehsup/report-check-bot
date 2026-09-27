@@ -26,6 +26,7 @@ def test_session_roundtrip(tmp_path: Path) -> None:
         awaiting_custom=True,
         cards=[card],
         recorded_ids={"abc"},
+        ui_message_id=777,
     )
     store.save(session)
     loaded = store.get(42)
@@ -33,6 +34,7 @@ def test_session_roundtrip(tmp_path: Path) -> None:
     assert loaded.index == 1
     assert loaded.awaiting_custom is True
     assert loaded.recorded_ids == {"abc"}
+    assert loaded.ui_message_id == 777
     assert loaded.cards[0].admin_name == "Admin"
     store.clear(42)
     assert store.get(42) is None

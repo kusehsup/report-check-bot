@@ -60,6 +60,8 @@ def test_merge_sort_and_format() -> None:
     assert "· 1/" in text
     assert "Вопрос:" in text
     assert "Ответ:" in text
+    # Telegram labels clarify source; sheet still stores Report|FAQ.
+    assert "Report · репорт" in text or "FAQ · z-request" in text
 
 
 def test_sheet_row() -> None:

@@ -17,6 +17,7 @@ class ReviewSession:
     awaiting_custom: bool
     cards: list[ReviewCard]
     recorded_ids: set[str]
+    ui_message_id: int | None = None
 
 
 class SessionStore:
@@ -41,7 +42,8 @@ class SessionStore:
                     written INTEGER NOT NULL,
                     awaiting_custom INTEGER NOT NULL,
                     cards_json TEXT NOT NULL,
-                    recorded_json TEXT NOT NULL DEFAULT '[]'
+                    recorded_json TEXT NOT NULL DEFAULT '[]',
+                    ui_message_id INTEGER
                 )
                 """
             )
@@ -53,6 +55,8 @@ class SessionStore:
                 conn.execute(
                     "ALTER TABLE sessions ADD COLUMN recorded_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "ui_message_id" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN ui_message_id INTEGER")
             conn.commit()
 
     @staticmethod
@@ -107,16 +111,18 @@ class SessionStore:
             conn.execute(
                 """
                 INSERT INTO sessions (
-                    chat_id, day, idx, written, awaiting_custom, cards_json, recorded_json
+                    chat_id, day, idx, written, awaiting_custom,
+                    cards_json, recorded_json, ui_message_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chat_id) DO UPDATE SET
                     day=excluded.day,
                     idx=excluded.idx,
                     written=excluded.written,
                     awaiting_custom=excluded.awaiting_custom,
                     cards_json=excluded.cards_json,
-                    recorded_json=excluded.recorded_json
+                    recorded_json=excluded.recorded_json,
+                    ui_message_id=excluded.ui_message_id
                 """,
                 (
                     session.chat_id,
@@ -126,6 +132,7 @@ class SessionStore:
                     1 if session.awaiting_custom else 0,
                     self._serialize_cards(session.cards),
                     json.dumps(sorted(session.recorded_ids), ensure_ascii=False),
+                    session.ui_message_id,
                 ),
             )
             conn.commit()
@@ -140,6 +147,8 @@ class SessionStore:
             return None
         recorded_raw = row["recorded_json"] if "recorded_json" in row.keys() else "[]"
         recorded = set(json.loads(str(recorded_raw or "[]")))
+        ui_raw = row["ui_message_id"] if "ui_message_id" in row.keys() else None
+        ui_message_id = int(ui_raw) if ui_raw is not None else None
         return ReviewSession(
             chat_id=int(row["chat_id"]),
             day=str(row["day"]),
@@ -148,6 +157,7 @@ class SessionStore:
             awaiting_custom=bool(row["awaiting_custom"]),
             cards=self._deserialize_cards(str(row["cards_json"])),
             recorded_ids=recorded,
+            ui_message_id=ui_message_id,
         )
 
     def clear(self, chat_id: int) -> None:

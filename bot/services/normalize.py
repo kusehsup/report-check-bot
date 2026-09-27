@@ -600,9 +600,19 @@ def merge_and_sort(report_cards: list[ReviewCard], faq_cards: list[ReviewCard]) 
     return sorted(merged, key=lambda c: c.answered_at, reverse=True)
 
 
+_TYPE_LABELS = {
+    "Report": "Report · репорт (админ-чат 2+)",
+    "FAQ": "FAQ · z-request (поддержка)",
+}
+
+
+def type_label(answer_type: str) -> str:
+    return _TYPE_LABELS.get(answer_type, answer_type)
+
+
 def format_card_text(card: ReviewCard, index: int, total: int) -> str:
     lines = [
-        f"{card.answer_type} · {index}/{total}",
+        f"{type_label(card.answer_type)} · {index}/{total}",
         card.answered_at,
         "",
         f"Игрок: {card.player_name} [{card.player_id}]",

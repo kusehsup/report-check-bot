@@ -5,8 +5,9 @@ import logging
 from datetime import date
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from bot.context import get_app
 from bot.keyboards import card_actions, day_picker, verdict_actions
@@ -24,44 +25,104 @@ def _esc(value: object) -> str:
     return html.escape(str(value))
 
 
+def _card_html(card: ReviewCard, index: int, total: int) -> str:
+    return f"<pre>{_esc(format_card_text(card, index, total))}</pre>"
+
+
+async def _set_ui(
+    message: Message,
+    session: ReviewSession,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    """Edit the single review UI message; send once if missing."""
+    app = get_app()
+    bot = message.bot
+    chat_id = session.chat_id
+
+    if session.ui_message_id is not None:
+        try:
+            await bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=session.ui_message_id,
+                reply_markup=reply_markup,
+            )
+            app.sessions.save(session)
+            return
+        except TelegramBadRequest as exc:
+            err = str(exc).lower()
+            if "message is not modified" in err:
+                app.sessions.save(session)
+                return
+            logger.info("UI edit failed (%s); sending a new message", exc)
+        except Exception:  # noqa: BLE001
+            logger.exception("UI edit failed; sending a new message")
+
+    sent = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+    )
+    session.ui_message_id = sent.message_id
+    app.sessions.save(session)
+
+
 async def _show_card(message: Message, session: ReviewSession) -> None:
     app = get_app()
     total = len(session.cards)
     if total == 0:
-        await message.answer("За выбранный день ответов для проверки нет.")
+        await _set_ui(message, session, "За выбранный день ответов для проверки нет.")
         app.sessions.clear(session.chat_id)
         return
     if session.index >= total:
-        await message.answer(
-            f"Готово.\nПросмотрено: {total}\nЗаписано в таблицу: {session.written}"
+        await _set_ui(
+            message,
+            session,
+            f"Готово.\nПросмотрено: {total}\nЗаписано в таблицу: {session.written}",
         )
         app.sessions.clear(session.chat_id)
         return
 
     card = session.cards[session.index]
     recorded = card.card_id in session.recorded_ids
-    text = format_card_text(card, session.index + 1, total)
-    await message.answer(
-        f"<pre>{_esc(text)}</pre>",
+    text = _card_html(card, session.index + 1, total)
+    await _set_ui(
+        message,
+        session,
+        text,
         reply_markup=card_actions(
             can_back=session.index > 0,
             recorded=recorded,
         ),
     )
-    app.sessions.save(session)
 
 
 async def _start_day(message: Message, day: date) -> None:
     app = get_app()
-    status = await message.answer(f"Загружаю логи за {day.isoformat()}…")
+    # Reuse the day-picker message as the single UI surface.
+    session_stub = ReviewSession(
+        chat_id=message.chat.id,
+        day=day.isoformat(),
+        index=0,
+        written=0,
+        awaiting_custom=False,
+        cards=[],
+        recorded_ids=set(),
+        ui_message_id=message.message_id,
+    )
+    await _set_ui(message, session_stub, f"Загружаю логи за {day.isoformat()}…")
+
     try:
         cards = await app.panel.fetch_day_cards(day)
     except PanelAuthError as exc:
-        await status.edit_text(f"Нет доступа к панели.\n{_esc(exc)}")
+        await _set_ui(message, session_stub, f"Нет доступа к панели.\n{_esc(exc)}")
+        app.sessions.clear(message.chat.id)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to fetch panel logs")
-        await status.edit_text(f"Ошибка загрузки логов: {_esc(exc)}")
+        await _set_ui(message, session_stub, f"Ошибка загрузки логов: {_esc(exc)}")
+        app.sessions.clear(message.chat.id)
         return
 
     skipped = 0
@@ -71,12 +132,17 @@ async def _start_day(message: Message, day: date) -> None:
             cards = app.sheets.filter_new_cards(cards)
             skipped = before - len(cards)
         except SheetsError as exc:
-            await status.edit_text(f"Ошибка таблицы: {_esc(exc)}")
+            await _set_ui(message, session_stub, f"Ошибка таблицы: {_esc(exc)}")
+            app.sessions.clear(message.chat.id)
             return
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to read spreadsheet")
-            await status.edit_text(f"Ошибка чтения таблицы: {_esc(exc)}")
+            await _set_ui(message, session_stub, f"Ошибка чтения таблицы: {_esc(exc)}")
+            app.sessions.clear(message.chat.id)
             return
+
+    report_n = sum(1 for c in cards if c.answer_type == "Report")
+    faq_n = sum(1 for c in cards if c.answer_type == "FAQ")
 
     session = ReviewSession(
         chat_id=message.chat.id,
@@ -86,6 +152,7 @@ async def _start_day(message: Message, day: date) -> None:
         awaiting_custom=False,
         cards=cards,
         recorded_ids=set(),
+        ui_message_id=session_stub.ui_message_id,
     )
     app.sessions.save(session)
 
@@ -99,16 +166,33 @@ async def _start_day(message: Message, day: date) -> None:
         backend_note = (
             f"\n⚠ Google Sheets не подключён — запись в {app.settings.local_sheet_path}"
         )
-    summary = (
-        f"День {day.isoformat()}: карточек {len(cards)}"
-        + (f" (пропущено уже записанных: {skipped})" if skipped else "")
-        + fixture_note
-        + backend_note
-    )
-    try:
-        await status.edit_text(summary)
-    except Exception:  # noqa: BLE001
-        await message.answer(summary)
+
+    if not cards:
+        summary = (
+            f"День {day.isoformat()}: карточек 0"
+            f" (Report: 0, FAQ/z-request: 0)"
+            + (f"\nПропущено уже записанных: {skipped}" if skipped else "")
+            + fixture_note
+            + backend_note
+            + "\n\nОтветов для проверки нет."
+        )
+        await _set_ui(message, session, summary)
+        app.sessions.clear(session.chat_id)
+        return
+
+    # First paint is the card itself; counts stay in the header of each card.
+    # Log a one-line prefix only when useful (skips / warnings).
+    if skipped or fixture_note or backend_note:
+        # Brief flash then card — still one message.
+        flash = (
+            f"День {day.isoformat()}: {len(cards)} "
+            f"(Report: {report_n}, FAQ/z-request: {faq_n})"
+            + (f", пропущено записанных: {skipped}" if skipped else "")
+            + fixture_note
+            + backend_note
+        )
+        await _set_ui(message, session, flash)
+
     await _show_card(message, session)
 
 
@@ -120,6 +204,8 @@ def _load_session(chat_id: int) -> ReviewSession | None:
 async def cmd_start(message: Message) -> None:
     await message.answer(
         "Бот проверки ответов администраторов.\n"
+        "Источники: Report (репорт в админ-чат 2+) и FAQ/z-request (поддержка).\n"
+        "В таблице колонка типа: Report или FAQ.\n\n"
         "/check — проверка дня\n"
         "/panel_status — статус сессии панели\n"
         "/panel_auth — обновить refresh (редко, раз в ~30 дней)",
@@ -159,12 +245,22 @@ async def act_bad(callback: CallbackQuery) -> None:
     if session is None:
         await callback.answer("Сессия не найдена. /check", show_alert=True)
         return
+    if session.index >= len(session.cards):
+        await callback.answer("Карточек больше нет", show_alert=True)
+        return
     card = session.cards[session.index]
     if card.card_id in session.recorded_ids:
         await callback.answer("Уже записано", show_alert=True)
         return
+    session.ui_message_id = callback.message.message_id
+    session.awaiting_custom = False
+    get_app().sessions.save(session)
     await callback.answer()
-    await callback.message.answer("Выберите вердикт:", reply_markup=verdict_actions())
+    text = (
+        _card_html(card, session.index + 1, len(session.cards))
+        + "\n\nВыберите вердикт:"
+    )
+    await _set_ui(callback.message, session, text, reply_markup=verdict_actions())
 
 
 @router.callback_query(F.data == "act:next")
@@ -177,6 +273,7 @@ async def act_next(callback: CallbackQuery) -> None:
         return
     session.index += 1
     session.awaiting_custom = False
+    session.ui_message_id = callback.message.message_id
     get_app().sessions.save(session)
     await callback.answer()
     await _show_card(callback.message, session)
@@ -192,6 +289,7 @@ async def act_prev(callback: CallbackQuery) -> None:
         return
     session.index = max(0, session.index - 1)
     session.awaiting_custom = False
+    session.ui_message_id = callback.message.message_id
     get_app().sessions.save(session)
     await callback.answer()
     await _show_card(callback.message, session)
@@ -208,33 +306,42 @@ async def act_finish(callback: CallbackQuery) -> None:
         return
     total = len(session.cards)
     written = session.written
-    app.sessions.clear(session.chat_id)
+    session.ui_message_id = callback.message.message_id
     await callback.answer()
-    await callback.message.answer(
-        f"Проверка остановлена.\nКарточек: {total}\nЗаписано: {written}"
+    await _set_ui(
+        callback.message,
+        session,
+        f"Проверка остановлена.\nКарточек: {total}\nЗаписано: {written}",
     )
+    app.sessions.clear(session.chat_id)
 
 
 async def _write_verdict(message: Message, session: ReviewSession, verdict: str) -> None:
     app = get_app()
     if session.index >= len(session.cards):
-        await message.answer("Карточек больше нет.")
+        await _set_ui(message, session, "Карточек больше нет.")
         return
     card: ReviewCard = session.cards[session.index]
     if card.card_id in session.recorded_ids:
-        await message.answer("Эта карточка уже записана. Жмите «Дальше».")
+        await _show_card(message, session)
         return
     if app.sheets is None:
-        await message.answer(
+        await _set_ui(
+            message,
+            session,
             "Google Sheets не настроен. Вердикт не записан. "
-            "Добавьте SERVICE_ACCOUNT_PATH или GOOGLE_SERVICE_ACCOUNT_JSON."
+            "Добавьте SERVICE_ACCOUNT_PATH или GOOGLE_SERVICE_ACCOUNT_JSON.",
         )
         return
     try:
         app.sheets.append_verdict(card, verdict)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to append sheet row")
-        await message.answer(f"Не удалось записать в таблицу: {_esc(exc)}")
+        await _set_ui(
+            message,
+            session,
+            f"Не удалось записать в таблицу: {_esc(exc)}",
+        )
         return
 
     session.recorded_ids.add(card.card_id)
@@ -242,7 +349,6 @@ async def _write_verdict(message: Message, session: ReviewSession, verdict: str)
     session.awaiting_custom = False
     session.index += 1
     app.sessions.save(session)
-    await message.answer(f"Записано: {_esc(verdict)}")
     await _show_card(message, session)
 
 
@@ -255,17 +361,24 @@ async def pick_verdict(callback: CallbackQuery) -> None:
         await callback.answer("Сессия не найдена. /check", show_alert=True)
         return
 
+    session.ui_message_id = callback.message.message_id
     value = callback.data.split(":", 1)[1]
     if value == "cancel":
         session.awaiting_custom = False
         get_app().sessions.save(session)
         await callback.answer("Отменено")
+        await _show_card(callback.message, session)
         return
     if value == "custom":
         session.awaiting_custom = True
         get_app().sessions.save(session)
         await callback.answer()
-        await callback.message.answer("Пришлите текст вердикта одним сообщением.")
+        card = session.cards[session.index]
+        text = (
+            _card_html(card, session.index + 1, len(session.cards))
+            + "\n\nПришлите текст вердикта одним сообщением."
+        )
+        await _set_ui(callback.message, session, text, reply_markup=verdict_actions())
         return
 
     await callback.answer()
@@ -280,6 +393,16 @@ async def custom_verdict_text(message: Message) -> None:
         return
     text = (message.text or "").strip()
     if not text:
-        await message.answer("Пустой вердикт. Пришлите текст или нажмите «Отмена».")
+        await _set_ui(
+            message,
+            session,
+            "Пустой вердикт. Пришлите текст или нажмите «Отмена».",
+            reply_markup=verdict_actions(),
+        )
         return
+    # Prefer deleting the user's verdict text to keep the chat clean.
+    try:
+        await message.delete()
+    except Exception:  # noqa: BLE001
+        pass
     await _write_verdict(message, session, text)
