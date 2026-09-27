@@ -7,6 +7,7 @@ from bot.config import Settings
 from bot.models import ReviewCard
 from bot.services.day_progress import DayProgressStore
 from bot.services.panel import PanelClient
+from bot.services.reviewed import ReviewedStore
 from bot.services.session import SessionStore
 from bot.services.skip_rules import SkipRulesStore
 
@@ -27,6 +28,7 @@ class AppContext:
     sessions: SessionStore
     day_progress: DayProgressStore
     skip_rules: SkipRulesStore
+    reviewed: ReviewedStore
     sheet_backend: str = "none"
 
 

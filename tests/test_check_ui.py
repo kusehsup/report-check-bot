@@ -10,6 +10,7 @@ from bot.context import AppContext, set_app
 from bot.handlers import check as check_mod
 from bot.models import ReviewCard
 from bot.services.day_progress import DayProgressStore
+from bot.services.reviewed import ReviewedStore
 from bot.services.session import ReviewSession, SessionStore
 from bot.services.skip_rules import SkipRulesStore
 
@@ -37,6 +38,7 @@ def app_ctx(tmp_path):
         sessions=sessions,
         day_progress=DayProgressStore(tmp_path / "s.db"),
         skip_rules=SkipRulesStore(tmp_path / "s.db"),
+        reviewed=ReviewedStore(tmp_path / "s.db"),
         sheet_backend="none",
     )
     set_app(ctx)

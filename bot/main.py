@@ -19,6 +19,7 @@ from bot.services.panel import PanelAuthError, PanelClient
 from bot.services.panel_session import PanelSessionStore
 from bot.services.session import SessionStore
 from bot.services.sheets import SheetsClient, SheetsError
+from bot.services.reviewed import ReviewedStore
 from bot.services.skip_rules import SkipRulesStore
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ def build_context(settings: Settings) -> AppContext:
         sessions=SessionStore(settings.session_db),
         day_progress=DayProgressStore(settings.session_db),
         skip_rules=SkipRulesStore(settings.session_db),
+        reviewed=ReviewedStore(settings.session_db),
         sheet_backend=sheet_backend,
     )
 

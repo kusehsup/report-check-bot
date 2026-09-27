@@ -22,10 +22,16 @@ class ReviewSession:
     skipped_auto: int = 0
     skipped_phrases: int = 0
     skipped_sheet: int = 0
+    skipped_passed: int = 0
 
     @property
     def skipped_total(self) -> int:
-        return self.skipped_auto + self.skipped_phrases + self.skipped_sheet
+        return (
+            self.skipped_auto
+            + self.skipped_phrases
+            + self.skipped_sheet
+            + self.skipped_passed
+        )
 
 
 class SessionStore:
@@ -138,6 +144,7 @@ class SessionStore:
                 "skipped_auto": session.skipped_auto,
                 "skipped_phrases": session.skipped_phrases,
                 "skipped_sheet": session.skipped_sheet,
+                "skipped_passed": session.skipped_passed,
             },
             ensure_ascii=False,
         )
@@ -153,6 +160,7 @@ class SessionStore:
             "skipped_auto": int(data.get("skipped_auto") or 0),
             "skipped_phrases": int(data.get("skipped_phrases") or 0),
             "skipped_sheet": int(data.get("skipped_sheet") or 0),
+            "skipped_passed": int(data.get("skipped_passed") or 0),
         }
 
     def save(self, session: ReviewSession) -> None:
@@ -215,6 +223,7 @@ class SessionStore:
             skipped_auto=stats["skipped_auto"],
             skipped_phrases=stats["skipped_phrases"],
             skipped_sheet=stats["skipped_sheet"],
+            skipped_passed=stats["skipped_passed"],
         )
 
     def clear(self, chat_id: int) -> None:
