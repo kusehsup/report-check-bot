@@ -12,34 +12,37 @@ from bot.services.normalize import (
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_report_log_one_card_per_answer_with_siblings() -> None:
+def test_report_log_pairs_answers_with_questions() -> None:
     payload = json.loads((FIXTURES / "report_log.json").read_text(encoding="utf-8"))
     cards = normalize_payload(payload, "Report")
 
-    # unanswered first item skipped; 1 + 1 + 5 answers
-    assert len(cards) == 7
+    # unanswered Solid_Interpolov skipped; Kirill 1 answer + Zub 2 answers
+    assert len(cards) == 3
 
     multi = [c for c in cards if c.player_name == "Zub_Molochnyy"]
-    assert len(multi) == 5
+    assert len(multi) == 2
     first = next(c for c in multi if c.admin_name == "Kesh_Qa")
     assert first.answer_type == "Report"
     assert first.question == "как подать обевлени в трк ритм"
     assert first.player_id == "1716393"
-    assert len(first.sibling_replies) == 4
-    assert any(s.admin_name == "Artem_Bariga" for s in first.sibling_replies)
+    assert len(first.sibling_replies) == 1
+    assert first.sibling_replies[0].admin_name == "Artem_Bariga"
 
-    jacob = next(c for c in cards if c.player_name == "Jacob_Ukraine")
-    assert jacob.answered_at == "2026-09-27 23:58:03"
-    assert jacob.answer == "на твинке только"
+    kirill = next(c for c in cards if c.player_name == "Kirill_Shramokokk")
+    assert kirill.answered_at == "2026-09-27 23:58:07"
+    assert kirill.answer == "иду"
+    assert kirill.question == "help"
 
 
-def test_faq_payload_nested_and_flat() -> None:
+def test_faq_payload_sender_name() -> None:
     payload = json.loads((FIXTURES / "player_requests_z.json").read_text(encoding="utf-8"))
     cards = normalize_payload(payload, "FAQ")
     assert len(cards) == 2
     assert {c.answer_type for c in cards} == {"FAQ"}
     names = {c.player_name for c in cards}
-    assert names == {"Polinka_Korgi", "Kostya_Robchic"}
+    assert names == {"Bernaba_Casamento", "Kostya_Robchic"}
+    one = next(c for c in cards if c.admin_name == "Daniel_Shevch")
+    assert "Рестарт" in one.answer
 
 
 def test_merge_sort_and_format() -> None:
@@ -61,27 +64,30 @@ def test_merge_sort_and_format() -> None:
 
 def test_sheet_row() -> None:
     cards = normalize_payload(
-        {
-            "answers": [
-                {
-                    "adminName": "A",
-                    "text": "ok",
-                    "createdAt": "2026-09-27 12:00:00",
-                }
-            ],
-            "question": "q",
-            "playerName": "P",
-            "playerId": 1,
-            "createdAt": "2026-09-27 11:00:00",
-        },
-        "FAQ",
+        [
+            {
+                "time": "2026-09-27 11:00:00",
+                "timeAsInt": 1,
+                "player": {"name": "P", "accountId": 1},
+                "type": "report",
+                "message": "q",
+            },
+            {
+                "time": "2026-09-27 12:00:00",
+                "timeAsInt": 2,
+                "admin": {"name": "A"},
+                "player": {"name": "P", "accountId": 1},
+                "type": "answer",
+                "message": "ok",
+            },
+        ],
+        "Report",
     )
-    # _as_list on dict without list keys — single thread object
     assert len(cards) == 1
     row = cards[0].sheet_row("Устная беседа")
     assert row == [
         "2026-09-27 12:00:00",
-        "FAQ",
+        "Report",
         "A",
         "q",
         "ok",

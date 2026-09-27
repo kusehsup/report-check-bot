@@ -1,23 +1,36 @@
-{
-  "data": [
-    {
-      "playerName": "Polinka_Korgi",
-      "playerId": 957329,
-      "createdAt": "2026-09-27 23:55:29",
-      "requestText": "помогите",
-      "answerText": "иду",
-      "adminName": "Garik_Trapov",
-      "answeredAt": "2026-09-27 23:55:40"
-    },
-    {
-      "player": {"name": "Kostya_Robchic", "id": 1001},
-      "question": "чин",
-      "answer": {
-        "adminName": "Garik_Trapov",
-        "text": "нет",
-        "createdAt": "2026-09-27 23:54:10"
-      },
-      "createdAt": "2026-09-27 23:54:01"
-    }
-  ]
-}
+[
+  {
+    "id": 278527,
+    "authorId": 1671159,
+    "authorName": "Bernaba_Casamento",
+    "message": "Васколько рестарт?",
+    "status": 1,
+    "time": "2026-09-27 23:52:29",
+    "answers": [
+      {
+        "time": "2026-09-27 23:52:59",
+        "questionId": 278527,
+        "senderId": 1255785,
+        "senderName": "Daniel_Shevch",
+        "message": "Рестарт происходит в 6:04 по МСК"
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "authorId": 1001,
+    "authorName": "Kostya_Robchic",
+    "message": "чин",
+    "status": 1,
+    "time": "2026-09-27 23:54:01",
+    "answers": [
+      {
+        "time": "2026-09-27 23:54:10",
+        "questionId": 1,
+        "senderId": 1081581,
+        "senderName": "Garik_Trapov",
+        "message": "нет"
+      }
+    ]
+  }
+]

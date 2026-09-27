@@ -1,67 +1,47 @@
 [
   {
-    "playerName": "Solid_Interpolov",
-    "playerId": 1490724,
-    "createdAt": "2026-09-27 23:58:58",
-    "message": "как чекнуть финку на бизах баны",
-    "answers": []
+    "time": "2026-09-27 23:57:53",
+    "timeAsInt": 1790542673,
+    "player": {"name": "Kirill_Shramokokk", "accountId": 1353277, "serverId": 6, "groups": []},
+    "type": "report",
+    "message": "help"
   },
   {
-    "player": {"name": "Kirill_Shramokokk", "id": 1353277},
-    "createdAt": "2026-09-27T23:57:53",
-    "question": "help",
-    "answers": [
-      {
-        "adminName": "Garik_Trapov",
-        "createdAt": "2026-09-27 23:58:07",
-        "text": "иду"
-      }
-    ]
+    "time": "2026-09-27 23:58:07",
+    "timeAsInt": 1790542687,
+    "admin": {"name": "Garik_Trapov", "accountId": 1081581, "serverId": 6, "groups": []},
+    "player": {"name": "Kirill_Shramokokk", "accountId": 1353277, "serverId": 6, "groups": []},
+    "type": "answer",
+    "message": "иду"
   },
   {
-    "playerName": "Jacob_Ukraine",
-    "playerId": "1161206",
-    "date": "2026-09-27 23:57:44",
-    "text": "у человека может быть два номера на сервере?",
-    "answers": [
-      {
-        "admin": {"name": "Garik_Trapov"},
-        "time": "23:58:03",
-        "message": "на твинке только"
-      }
-    ]
+    "time": "2026-09-27 23:55:08",
+    "timeAsInt": 1790542508,
+    "player": {"name": "Zub_Molochnyy", "accountId": 1716393, "serverId": 6, "groups": []},
+    "type": "report",
+    "message": "как подать обевлени в трк ритм"
   },
   {
-    "playerName": "Zub_Molochnyy",
-    "playerId": 1716393,
-    "createdAt": "2026-09-27 23:55:08",
-    "question": "как подать обевлени в трк ритм",
-    "answers": [
-      {
-        "adminName": "Kesh_Qa",
-        "createdAt": "2026-09-27 23:55:15",
-        "text": "/ad - подать объявление в ТРК"
-      },
-      {
-        "adminName": "Artem_Bariga",
-        "createdAt": "2026-09-27 23:55:20",
-        "text": "/ad"
-      },
-      {
-        "adminName": "Daniil_Lamon",
-        "createdAt": "2026-09-27 23:55:25",
-        "text": "/ad"
-      },
-      {
-        "adminName": "Artem_Bariga",
-        "createdAt": "2026-09-27 23:55:30",
-        "text": "через /ad"
-      },
-      {
-        "adminName": "Daniel_Shevch",
-        "createdAt": "2026-09-27 23:55:40",
-        "text": "Команда /ad"
-      }
-    ]
+    "time": "2026-09-27 23:55:15",
+    "timeAsInt": 1790542515,
+    "admin": {"name": "Kesh_Qa", "accountId": 1, "serverId": 6, "groups": []},
+    "player": {"name": "Zub_Molochnyy", "accountId": 1716393, "serverId": 6, "groups": []},
+    "type": "answer",
+    "message": "/ad - подать объявление в ТРК"
+  },
+  {
+    "time": "2026-09-27 23:55:20",
+    "timeAsInt": 1790542520,
+    "admin": {"name": "Artem_Bariga", "accountId": 2, "serverId": 6, "groups": []},
+    "player": {"name": "Zub_Molochnyy", "accountId": 1716393, "serverId": 6, "groups": []},
+    "type": "answer",
+    "message": "/ad"
+  },
+  {
+    "time": "2026-09-27 23:58:58",
+    "timeAsInt": 1790542738,
+    "player": {"name": "Solid_Interpolov", "accountId": 1490724, "serverId": 6, "groups": []},
+    "type": "report",
+    "message": "как чекнуть финку на бизах баны"
   }
 ]

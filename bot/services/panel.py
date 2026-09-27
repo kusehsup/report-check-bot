@@ -29,7 +29,7 @@ class PanelClient:
         refresh_token: str = "",
         access_token: str = "",
         server_id: int = 6,
-        timeout: float = 30.0,
+        timeout: float = 120.0,
         fixture_dir: str | Path | None = None,
         prefer_fixtures: bool = False,
     ) -> None:
@@ -50,9 +50,10 @@ class PanelClient:
             parts.append(f"access_token={self.access_token}")
         return "; ".join(parts)
 
-    def _headers(self, *, include_cookie: bool = True) -> dict[str, str]:
+    def _headers(self, *, include_cookie: bool = True, api_key: bool = False) -> dict[str, str]:
         headers = {
             "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
             "Origin": self.base_url,
             "Referer": f"{self.base_url}/",
             "User-Agent": (
@@ -61,6 +62,9 @@ class PanelClient:
                 "Chrome/130.0.0.0 Safari/537.36"
             ),
         }
+        # Panel axios interceptor: X-API-KEY: Bearer <accessToken>
+        if api_key and self.access_token:
+            headers["X-API-KEY"] = f"Bearer {self.access_token}"
         if include_cookie and self._cookie_header():
             headers["Cookie"] = self._cookie_header()
         return headers
@@ -107,9 +111,20 @@ class PanelClient:
             response = await client.get(
                 f"{self.base_url}{path}",
                 params=params,
-                headers=self._headers(),
+                headers=self._headers(api_key=True),
             )
-        if response.status_code in (401, 403):
+        # Axios client refreshes when API says access JWT expired.
+        expired = False
+        if response.headers.get("content-type", "").startswith("application/json"):
+            try:
+                payload = response.json()
+            except Exception:  # noqa: BLE001
+                payload = None
+            if isinstance(payload, dict) and payload.get("message") == (
+                "JWT access token has expired"
+            ):
+                expired = True
+        if response.status_code in (401, 403) or expired:
             if self.refresh_token:
                 self.access_token = ""
                 await self.ensure_access_token()
@@ -117,13 +132,12 @@ class PanelClient:
                     response = await client.get(
                         f"{self.base_url}{path}",
                         params=params,
-                        headers=self._headers(),
+                        headers=self._headers(api_key=True),
                     )
         if response.status_code in (401, 403):
             raise PanelAuthError(
                 "Нет доступа к логам панели (HTTP 403). "
-                "Сессия валидна для /auth, но API логов с этого IP недоступен — "
-                "запустите бота с вашей машины/VPN или используйте PANEL_FIXTURE_DIR."
+                "Проверьте PANEL_REFRESH_NOW / X-API-KEY."
             )
         if response.status_code >= 400:
             body = response.text[:300]

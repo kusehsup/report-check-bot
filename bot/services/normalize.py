@@ -223,7 +223,15 @@ def _looks_like_flat_answer(obj: dict[str, Any]) -> bool:
 
 
 def _player_fields(obj: dict[str, Any]) -> tuple[str, str]:
-    name = _nested_name(
+    name = _first_str(
+        obj,
+        (
+            "authorName",
+            "author_name",
+            "playerName",
+            "player_name",
+        ),
+    ) or _nested_name(
         obj,
         ("player", "user", "author", "account"),
         (
@@ -236,27 +244,32 @@ def _player_fields(obj: dict[str, Any]) -> tuple[str, str]:
             "login",
         ),
     )
-    player_id = _nested_name(
+    player_id = _first_str(
         obj,
-        ("player", "user", "author", "account"),
         (
+            "authorId",
+            "author_id",
             "playerId",
             "player_id",
-            "id",
-            "accountId",
-            "account_id",
             "staticId",
             "static_id",
-            "uid",
         ),
     )
-    # Prefer explicit player id over nested user.id that may be admin
-    explicit_id = _first_str(
-        obj,
-        ("playerId", "player_id", "staticId", "static_id", "accountId"),
-    )
-    if explicit_id:
-        player_id = explicit_id
+    if not player_id:
+        player_id = _nested_name(
+            obj,
+            ("player", "user", "author", "account"),
+            (
+                "playerId",
+                "player_id",
+                "id",
+                "accountId",
+                "account_id",
+                "staticId",
+                "static_id",
+                "uid",
+            ),
+        )
     return name, player_id
 
 
@@ -279,9 +292,18 @@ def _question_of(obj: dict[str, Any]) -> str:
 
 
 def _admin_of(obj: dict[str, Any]) -> str:
-    return _nested_name(
+    return _first_str(
         obj,
-        ("admin", "administrator", "helper", "support", "user", "author"),
+        (
+            "senderName",
+            "sender_name",
+            "adminName",
+            "admin_name",
+            "administratorName",
+        ),
+    ) or _nested_name(
+        obj,
+        ("admin", "administrator", "helper", "support", "sender"),
         (
             "adminName",
             "admin_name",
@@ -478,9 +500,84 @@ def _card_from_flat(item: dict[str, Any], answer_type: str) -> ReviewCard | None
     )
 
 
+def _is_exbot_report_log(items: list[Any]) -> bool:
+    if not items or not isinstance(items[0], dict):
+        return False
+    sample = items[0]
+    return sample.get("type") in {"report", "answer"} and isinstance(
+        sample.get("player"), dict
+    )
+
+
+def normalize_exbot_report_log(items: list[dict[str, Any]]) -> list[ReviewCard]:
+    """Flat report-log feed: type=report questions + type=answer replies."""
+    reports_by_player: dict[str, list[dict[str, Any]]] = {}
+    answers: list[dict[str, Any]] = []
+    for item in items:
+        kind = item.get("type")
+        player = item.get("player") or {}
+        pid = str(player.get("accountId") or player.get("id") or "")
+        if kind == "report":
+            reports_by_player.setdefault(pid, []).append(item)
+        elif kind == "answer":
+            answers.append(item)
+
+    for reps in reports_by_player.values():
+        reps.sort(key=lambda r: int(r.get("timeAsInt") or 0))
+
+    threads: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for ans in answers:
+        player = ans.get("player") or {}
+        pid = str(player.get("accountId") or player.get("id") or "")
+        at = int(ans.get("timeAsInt") or 0)
+        matched: dict[str, Any] | None = None
+        for report in reports_by_player.get(pid, []):
+            if int(report.get("timeAsInt") or 0) <= at:
+                matched = report
+            else:
+                break
+        if matched is None:
+            key: tuple[Any, ...] = (pid, None, "")
+            question = "—"
+            question_time = str(ans.get("time") or "")
+        else:
+            key = (pid, matched.get("timeAsInt"), matched.get("message"))
+            question = str(matched.get("message") or "—")
+            question_time = str(matched.get("time") or "")
+
+        thread = threads.setdefault(
+            key,
+            {
+                "playerName": player.get("name") or "—",
+                "playerId": pid or "—",
+                "question": question,
+                "createdAt": question_time,
+                "answers": [],
+            },
+        )
+        admin = ans.get("admin") or {}
+        thread["answers"].append(
+            {
+                "adminName": admin.get("name") or "—",
+                "text": ans.get("message") or "—",
+                "createdAt": ans.get("time"),
+            }
+        )
+
+    cards: list[ReviewCard] = []
+    for thread in threads.values():
+        cards.extend(_cards_from_thread(thread, "Report"))
+    return cards
+
+
 def normalize_payload(payload: Any, answer_type: str) -> list[ReviewCard]:
     """Turn panel JSON into one card per admin answer."""
     items = _as_list(payload)
+    if answer_type == "Report" and _is_exbot_report_log(items):
+        return normalize_exbot_report_log(
+            [item for item in items if isinstance(item, dict)]
+        )
+
     cards: list[ReviewCard] = []
     for item in items:
         if not isinstance(item, dict):
