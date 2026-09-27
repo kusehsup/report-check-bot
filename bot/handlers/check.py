@@ -13,7 +13,7 @@ from bot.context import get_app
 from bot.keyboards import card_actions, day_picker, verdict_actions
 from bot.models import ReviewCard
 from bot.services.normalize import format_card_html
-from bot.services.panel import PanelAuthError, moscow_today, moscow_yesterday
+from bot.services.panel import PanelAuthError, moscow_recent_days
 from bot.services.session import ReviewSession
 from bot.services.sheets import SheetsError
 
@@ -207,7 +207,7 @@ async def cmd_start(message: Message) -> None:
         "Бот проверки ответов администраторов.\n"
         "Источники: Report (репорт в админ-чат 2+) и FAQ/z-request (поддержка).\n"
         "В таблице колонка типа: Report или FAQ.\n\n"
-        "/check — проверка дня\n"
+        "/check — проверка дня (последние 5 дней, МСК)\n"
         "/panel_status — статус сессии панели\n"
         "/panel_auth — обновить refresh (редко, раз в ~30 дней)",
         reply_markup=day_picker(),
@@ -216,21 +216,30 @@ async def cmd_start(message: Message) -> None:
 
 @router.message(Command("check"))
 async def cmd_check(message: Message) -> None:
-    await message.answer("Какой день проверить?", reply_markup=day_picker())
+    await message.answer(
+        "Какой день проверить? (последние 5 дней, МСК)",
+        reply_markup=day_picker(),
+    )
 
 
-@router.callback_query(F.data == "day:today")
-async def pick_today(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("day:"))
+async def pick_day(callback: CallbackQuery) -> None:
+    if not callback.message or not callback.data:
+        return
+    raw = callback.data.split(":", 1)[1].strip()
+    allowed = {d.isoformat() for d in moscow_recent_days(5)}
+    # Keep legacy aliases working if an old keyboard is still on screen.
+    if raw == "today":
+        raw = next(iter(sorted(allowed, reverse=True)))
+    elif raw == "yesterday":
+        ordered = sorted(allowed, reverse=True)
+        raw = ordered[1] if len(ordered) > 1 else ordered[0]
+    if raw not in allowed:
+        await callback.answer("Можно выбрать только из последних 5 дней", show_alert=True)
+        return
+    day = date.fromisoformat(raw)
     await callback.answer()
-    if callback.message:
-        await _start_day(callback.message, moscow_today())
-
-
-@router.callback_query(F.data == "day:yesterday")
-async def pick_yesterday(callback: CallbackQuery) -> None:
-    await callback.answer()
-    if callback.message:
-        await _start_day(callback.message, moscow_yesterday())
+    await _start_day(callback.message, day)
 
 
 @router.callback_query(F.data == "act:noop")

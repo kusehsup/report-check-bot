@@ -278,5 +278,11 @@ def moscow_yesterday() -> date:
     return date.fromordinal(moscow_today().toordinal() - 1)
 
 
+def moscow_recent_days(count: int = 5) -> list[date]:
+    """Last `count` calendar days in Moscow, newest first (today …)."""
+    today = moscow_today()
+    return [date.fromordinal(today.toordinal() - offset) for offset in range(count)]
+
+
 def encode_day_param(value: str) -> str:
     return quote(value, safe="")

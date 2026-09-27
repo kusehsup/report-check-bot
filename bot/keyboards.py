@@ -1,17 +1,53 @@
 from __future__ import annotations
 
+from datetime import date
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot.services.panel import moscow_recent_days, moscow_today
 
-def day_picker() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Сегодня", callback_data="day:today"),
-                InlineKeyboardButton(text="Вчера", callback_data="day:yesterday"),
-            ]
-        ]
-    )
+_WEEKDAYS_RU = (
+    "пн",
+    "вт",
+    "ср",
+    "чт",
+    "пт",
+    "сб",
+    "вс",
+)
+
+
+def _day_button_label(day: date, *, today: date) -> str:
+    delta = (today - day).days
+    stamp = day.strftime("%d.%m")
+    weekday = _WEEKDAYS_RU[day.weekday()]
+    if delta == 0:
+        return f"Сегодня · {stamp}"
+    if delta == 1:
+        return f"Вчера · {stamp}"
+    return f"{weekday} · {stamp}"
+
+
+def day_picker(*, days: int = 5) -> InlineKeyboardMarkup:
+    """Inline buttons for the last N Moscow calendar days (newest first)."""
+    today = moscow_today()
+    recent = moscow_recent_days(days)
+    rows: list[list[InlineKeyboardButton]] = []
+    # Two buttons per row for compact picker.
+    row: list[InlineKeyboardButton] = []
+    for day in recent:
+        row.append(
+            InlineKeyboardButton(
+                text=_day_button_label(day, today=today),
+                callback_data=f"day:{day.isoformat()}",
+            )
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def card_actions(
