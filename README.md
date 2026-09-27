@@ -27,11 +27,13 @@ cp .env.example .env
 | Переменная | Назначение |
 |---|---|
 | `BOT_TOKEN` | токен Telegram-бота |
-| `PANEL_REFRESH_NOW` | cookie `refresh_token` после входа на панель |
-| `PANEL_ACCESS_NOW` | запасной access token |
+| `PANEL_REFRESH_NOW` | cookie `refresh_token` (один раз; дальше крутится сам) |
+| `PANEL_ACCESS_NOW` | необязательно; access обновляется автоматически |
 | `SERVICE_ACCOUNT_PATH` | путь к JSON ключу Google service account |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | тот же ключ одной строкой (альтернатива пути) |
-| `ADMIN_IDS` | необязательно: кто может пользоваться ботом |
+| `ADMIN_IDS` | кто может пользоваться ботом |
+
+Сессия панели пишется в `data/panel_session.json`. Access обновляется сам; если панель ротирует refresh — новое значение сохраняется туда же. Команды: `/panel_status`, `/panel_auth`.
 
 Таблицу нужно расшарить на email сервисного аккаунта с правом редактора.
 

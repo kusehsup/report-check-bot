@@ -12,9 +12,15 @@ import httpx
 
 from bot.models import ReviewCard
 from bot.services.normalize import merge_and_sort, normalize_payload
+from bot.services.panel_session import (
+    PanelSessionStore,
+    jwt_seconds_left,
+)
 
 logger = logging.getLogger(__name__)
 MOSCOW = ZoneInfo("Europe/Moscow")
+# Refresh access a bit before JWT expiry to avoid mid-request failures.
+ACCESS_SKEW_SECONDS = 120
 
 
 class PanelAuthError(RuntimeError):
@@ -32,15 +38,55 @@ class PanelClient:
         timeout: float = 120.0,
         fixture_dir: str | Path | None = None,
         prefer_fixtures: bool = False,
+        session_store: PanelSessionStore | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.refresh_token = refresh_token.strip()
-        self.access_token = access_token.strip()
         self.server_id = server_id
         self.timeout = timeout
         self.fixture_dir = Path(fixture_dir) if fixture_dir else None
         self.prefer_fixtures = prefer_fixtures
         self.used_fixtures = False
+        self.session_store = session_store
+
+        env_refresh = refresh_token.strip()
+        env_access = access_token.strip()
+        stored = session_store.load() if session_store else None
+
+        # Prefer persisted session: it may contain a rotated refresh newer than .env.
+        if stored and stored.refresh_token:
+            self.refresh_token = stored.refresh_token
+            self.access_token = stored.access_token or env_access
+            logger.info("Loaded panel session from %s", session_store.path)
+        else:
+            self.refresh_token = env_refresh
+            self.access_token = env_access
+            if session_store and env_refresh:
+                session_store.save(
+                    refresh_token=env_refresh,
+                    access_token=env_access,
+                )
+
+    def update_tokens(self, *, refresh_token: str, access_token: str = "") -> None:
+        self.refresh_token = refresh_token.strip()
+        if access_token.strip():
+            self.access_token = access_token.strip()
+        self._persist()
+
+    def _persist(self) -> None:
+        if self.session_store is None:
+            return
+        if not self.refresh_token:
+            return
+        self.session_store.save(
+            refresh_token=self.refresh_token,
+            access_token=self.access_token,
+        )
+
+    def refresh_seconds_left(self) -> float | None:
+        return jwt_seconds_left(self.refresh_token) if self.refresh_token else None
+
+    def access_seconds_left(self) -> float | None:
+        return jwt_seconds_left(self.access_token) if self.access_token else None
 
     def _cookie_header(self) -> str:
         parts: list[str] = []
@@ -62,20 +108,28 @@ class PanelClient:
                 "Chrome/130.0.0.0 Safari/537.36"
             ),
         }
-        # Panel axios interceptor: X-API-KEY: Bearer <accessToken>
         if api_key and self.access_token:
             headers["X-API-KEY"] = f"Bearer {self.access_token}"
         if include_cookie and self._cookie_header():
             headers["Cookie"] = self._cookie_header()
         return headers
 
-    async def ensure_access_token(self) -> str:
+    def _access_still_valid(self) -> bool:
+        left = self.access_seconds_left()
+        return left is not None and left > ACCESS_SKEW_SECONDS
+
+    async def ensure_access_token(self, *, force: bool = False) -> str:
         if self.prefer_fixtures and self.fixture_dir:
             return self.access_token or "fixture"
-        if not self.refresh_token and self.access_token:
+        if not force and self._access_still_valid():
             return self.access_token
+        if not self.refresh_token and self.access_token:
+            if self._access_still_valid() or not force:
+                return self.access_token
         if not self.refresh_token:
-            raise PanelAuthError("PANEL_REFRESH_NOW is empty")
+            raise PanelAuthError(
+                "Нет refresh_token. Пришлите его командой /panel_auth"
+            )
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(
@@ -87,7 +141,8 @@ class PanelClient:
             )
         if response.status_code in (401, 403):
             raise PanelAuthError(
-                "Сессия панели истекла. Обновите PANEL_REFRESH_NOW после входа."
+                "Сессия панели истекла. Зайдите на panel.exbot.su, "
+                "скопируйте cookie refresh_token и пришлите боту: /panel_auth"
             )
         if response.status_code >= 400:
             raise PanelAuthError(
@@ -103,6 +158,7 @@ class PanelClient:
                 self.refresh_token = cookie.value
             if cookie.name == "access_token" and cookie.value:
                 self.access_token = cookie.value
+        self._persist()
         return self.access_token
 
     async def _get_json(self, path: str, params: dict[str, Any]) -> Any:
@@ -113,7 +169,6 @@ class PanelClient:
                 params=params,
                 headers=self._headers(api_key=True),
             )
-        # Axios client refreshes when API says access JWT expired.
         expired = False
         if response.headers.get("content-type", "").startswith("application/json"):
             try:
@@ -126,8 +181,7 @@ class PanelClient:
                 expired = True
         if response.status_code in (401, 403) or expired:
             if self.refresh_token:
-                self.access_token = ""
-                await self.ensure_access_token()
+                await self.ensure_access_token(force=True)
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.get(
                         f"{self.base_url}{path}",
@@ -136,8 +190,8 @@ class PanelClient:
                     )
         if response.status_code in (401, 403):
             raise PanelAuthError(
-                "Нет доступа к логам панели (HTTP 403). "
-                "Проверьте PANEL_REFRESH_NOW / X-API-KEY."
+                "Нет доступа к логам панели. "
+                "Обновите сессию через /panel_auth"
             )
         if response.status_code >= 400:
             body = response.text[:300]
@@ -225,5 +279,4 @@ def moscow_yesterday() -> date:
 
 
 def encode_day_param(value: str) -> str:
-    """Helper for debugging URL encoding (spaces -> %20)."""
     return quote(value, safe="")

@@ -102,11 +102,13 @@ class Settings(BaseSettings):
     def require_panel_auth(self) -> Settings:
         if self.panel_fixture_dir.strip():
             return self
-        if not self.panel_refresh_token and not self.panel_access_token:
-            raise ValueError(
-                "Set PANEL_REFRESH_NOW (preferred) or PANEL_ACCESS_NOW"
-            )
-        return self
+        if self.panel_refresh_token or self.panel_access_token:
+            return self
+        if self.panel_session_path.is_file():
+            return self
+        raise ValueError(
+            "Set PANEL_REFRESH_NOW once (or provide data/panel_session.json)"
+        )
 
     @property
     def session_db(self) -> Path:
@@ -115,6 +117,10 @@ class Settings(BaseSettings):
     @property
     def local_sheet_path(self) -> Path:
         return self.data_dir / "sheet-mirror.csv"
+
+    @property
+    def panel_session_path(self) -> Path:
+        return self.data_dir / "panel_session.json"
 
     def has_google_credentials(self) -> bool:
         if self.google_service_account_json.strip():

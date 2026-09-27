@@ -120,7 +120,9 @@ def _load_session(chat_id: int) -> ReviewSession | None:
 async def cmd_start(message: Message) -> None:
     await message.answer(
         "Бот проверки ответов администраторов.\n"
-        "Команда /check — начать проверку дня.",
+        "/check — проверка дня\n"
+        "/panel_status — статус сессии панели\n"
+        "/panel_auth — обновить refresh (редко, раз в ~30 дней)",
         reply_markup=day_picker(),
     )
 
@@ -272,6 +274,7 @@ async def pick_verdict(callback: CallbackQuery) -> None:
 
 @router.message(F.text)
 async def custom_verdict_text(message: Message) -> None:
+    # JWT pastes are handled by panel_auth router first.
     session = _load_session(message.chat.id)
     if session is None or not session.awaiting_custom:
         return
