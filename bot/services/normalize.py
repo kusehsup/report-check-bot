@@ -745,7 +745,14 @@ def _dialogue_window(card: ReviewCard, *, max_lines: int = 14) -> list[DialogueL
     return window
 
 
-def format_card_html(card: ReviewCard, index: int, total: int) -> str:
+def format_card_html(
+    card: ReviewCard,
+    index: int,
+    total: int,
+    *,
+    raw_total: int = 0,
+    skipped_total: int = 0,
+) -> str:
     """Telegram HTML card: clear focus on the agent answer under review."""
     import html as html_mod
 
@@ -753,9 +760,18 @@ def format_card_html(card: ReviewCard, index: int, total: int) -> str:
     role_who = "агента" if card.answer_type == "FAQ" else "админа"
     siblings_n = len(card.sibling_replies)
 
+    progress = f"<code>{index}/{total}</code> к проверке"
+    if raw_total > total or skipped_total > 0:
+        shown_raw = raw_total if raw_total > 0 else total + skipped_total
+        progress += (
+            f" · из <code>{shown_raw}</code>"
+            f" · пропущено <code>{skipped_total if skipped_total else shown_raw - total}</code>"
+        )
+
     parts: list[str] = [
         f"<b>{esc(type_label(card.answer_type))}</b>",
-        f"<code>{index}/{total}</code> · <code>{esc(card.answered_at)}</code>",
+        f"{progress}",
+        f"<code>{esc(card.answered_at)}</code>",
         "",
         f"Игрок <b>{esc(card.player_name)}</b> · <code>{esc(card.player_id)}</code>",
         "",
@@ -817,11 +833,24 @@ def format_card_html(card: ReviewCard, index: int, total: int) -> str:
     return "\n".join(parts)
 
 
-def format_card_text(card: ReviewCard, index: int, total: int) -> str:
+def format_card_text(
+    card: ReviewCard,
+    index: int,
+    total: int,
+    *,
+    raw_total: int = 0,
+    skipped_total: int = 0,
+) -> str:
     """Plain-text card (tests / logs). Same structure as HTML without tags."""
     import re
 
-    html = format_card_html(card, index, total)
+    html = format_card_html(
+        card,
+        index,
+        total,
+        raw_total=raw_total,
+        skipped_total=skipped_total,
+    )
     text = html.replace("<blockquote>", "«").replace("</blockquote>", "»")
     text = re.sub(r"<[^>]+>", "", text)
     return text

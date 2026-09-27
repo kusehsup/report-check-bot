@@ -18,6 +18,14 @@ class ReviewSession:
     cards: list[ReviewCard]
     recorded_ids: set[str]
     ui_message_id: int | None = None
+    raw_total: int = 0
+    skipped_auto: int = 0
+    skipped_phrases: int = 0
+    skipped_sheet: int = 0
+
+    @property
+    def skipped_total(self) -> int:
+        return self.skipped_auto + self.skipped_phrases + self.skipped_sheet
 
 
 class SessionStore:
@@ -43,7 +51,8 @@ class SessionStore:
                     awaiting_custom INTEGER NOT NULL,
                     cards_json TEXT NOT NULL,
                     recorded_json TEXT NOT NULL DEFAULT '[]',
-                    ui_message_id INTEGER
+                    ui_message_id INTEGER,
+                    stats_json TEXT NOT NULL DEFAULT '{}'
                 )
                 """
             )
@@ -57,6 +66,10 @@ class SessionStore:
                 )
             if "ui_message_id" not in cols:
                 conn.execute("ALTER TABLE sessions ADD COLUMN ui_message_id INTEGER")
+            if "stats_json" not in cols:
+                conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN stats_json TEXT NOT NULL DEFAULT '{}'"
+                )
             conn.commit()
 
     @staticmethod
@@ -117,15 +130,40 @@ class SessionStore:
             )
         return cards
 
+    @staticmethod
+    def _serialize_stats(session: ReviewSession) -> str:
+        return json.dumps(
+            {
+                "raw_total": session.raw_total,
+                "skipped_auto": session.skipped_auto,
+                "skipped_phrases": session.skipped_phrases,
+                "skipped_sheet": session.skipped_sheet,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _deserialize_stats(raw: str | None) -> dict[str, int]:
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        return {
+            "raw_total": int(data.get("raw_total") or 0),
+            "skipped_auto": int(data.get("skipped_auto") or 0),
+            "skipped_phrases": int(data.get("skipped_phrases") or 0),
+            "skipped_sheet": int(data.get("skipped_sheet") or 0),
+        }
+
     def save(self, session: ReviewSession) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO sessions (
                     chat_id, day, idx, written, awaiting_custom,
-                    cards_json, recorded_json, ui_message_id
+                    cards_json, recorded_json, ui_message_id, stats_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chat_id) DO UPDATE SET
                     day=excluded.day,
                     idx=excluded.idx,
@@ -133,7 +171,8 @@ class SessionStore:
                     awaiting_custom=excluded.awaiting_custom,
                     cards_json=excluded.cards_json,
                     recorded_json=excluded.recorded_json,
-                    ui_message_id=excluded.ui_message_id
+                    ui_message_id=excluded.ui_message_id,
+                    stats_json=excluded.stats_json
                 """,
                 (
                     session.chat_id,
@@ -144,6 +183,7 @@ class SessionStore:
                     self._serialize_cards(session.cards),
                     json.dumps(sorted(session.recorded_ids), ensure_ascii=False),
                     session.ui_message_id,
+                    self._serialize_stats(session),
                 ),
             )
             conn.commit()
@@ -160,6 +200,8 @@ class SessionStore:
         recorded = set(json.loads(str(recorded_raw or "[]")))
         ui_raw = row["ui_message_id"] if "ui_message_id" in row.keys() else None
         ui_message_id = int(ui_raw) if ui_raw is not None else None
+        stats_raw = row["stats_json"] if "stats_json" in row.keys() else "{}"
+        stats = self._deserialize_stats(str(stats_raw or "{}"))
         return ReviewSession(
             chat_id=int(row["chat_id"]),
             day=str(row["day"]),
@@ -169,6 +211,10 @@ class SessionStore:
             cards=self._deserialize_cards(str(row["cards_json"])),
             recorded_ids=recorded,
             ui_message_id=ui_message_id,
+            raw_total=stats["raw_total"],
+            skipped_auto=stats["skipped_auto"],
+            skipped_phrases=stats["skipped_phrases"],
+            skipped_sheet=stats["skipped_sheet"],
         )
 
     def clear(self, chat_id: int) -> None:

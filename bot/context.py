@@ -8,6 +8,7 @@ from bot.models import ReviewCard
 from bot.services.day_progress import DayProgressStore
 from bot.services.panel import PanelClient
 from bot.services.session import SessionStore
+from bot.services.skip_rules import SkipRulesStore
 
 
 class SheetStore(Protocol):
@@ -25,6 +26,7 @@ class AppContext:
     sheets: SheetStore | None
     sessions: SessionStore
     day_progress: DayProgressStore
+    skip_rules: SkipRulesStore
     sheet_backend: str = "none"
 
 

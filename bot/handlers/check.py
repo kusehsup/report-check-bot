@@ -25,8 +25,14 @@ def _esc(value: object) -> str:
     return html.escape(str(value))
 
 
-def _card_html(card: ReviewCard, index: int, total: int) -> str:
-    return format_card_html(card, index, total)
+def _card_html(card: ReviewCard, session: ReviewSession) -> str:
+    return format_card_html(
+        card,
+        session.index + 1,
+        len(session.cards),
+        raw_total=session.raw_total,
+        skipped_total=session.skipped_total,
+    )
 
 
 def _day_picker_markup(*, mode: str = "check") -> InlineKeyboardMarkup:
@@ -122,7 +128,7 @@ async def _show_card(message: Message, session: ReviewSession) -> None:
     _sync_remaining(session)
     card = session.cards[session.index]
     recorded = card.card_id in session.recorded_ids
-    text = _card_html(card, session.index + 1, total)
+    text = _card_html(card, session)
     await _set_ui(
         message,
         session,
@@ -174,12 +180,20 @@ async def _start_day(
         return
 
     total_raw = len(cards)
-    skipped = 0
+
+    # 1) Always skip auto-responder + user skip phrases.
+    skip_result = app.skip_rules.filter_cards(cards)
+    cards = skip_result.cards
+    skipped_auto = skip_result.skipped_auto
+    skipped_phrases = skip_result.skipped_phrases
+
+    # 2) Skip already written sheet rows (unless force re-check).
+    skipped_sheet = 0
     if app.sheets is not None and not force_reload:
         try:
             before = len(cards)
             cards = app.sheets.filter_new_cards(cards)
-            skipped = before - len(cards)
+            skipped_sheet = before - len(cards)
         except SheetsError as exc:
             await _set_ui(message, session_stub, f"Ошибка таблицы: {_esc(exc)}")
             app.sessions.clear(message.chat.id)
@@ -190,6 +204,7 @@ async def _start_day(
             app.sessions.clear(message.chat.id)
             return
 
+    skipped_total = skipped_auto + skipped_phrases + skipped_sheet
     app.day_progress.save_load(day_key, total=total_raw, remaining=len(cards))
 
     report_n = sum(1 for c in cards if c.answer_type == "Report")
@@ -204,6 +219,10 @@ async def _start_day(
         cards=cards,
         recorded_ids=set(),
         ui_message_id=session_stub.ui_message_id,
+        raw_total=total_raw,
+        skipped_auto=skipped_auto,
+        skipped_phrases=skipped_phrases,
+        skipped_sheet=skipped_sheet,
     )
     app.sessions.save(session)
 
@@ -222,12 +241,17 @@ async def _start_day(
         if force_reload
         else ""
     )
+    skip_note = (
+        f"\nПропущено: автоответ {skipped_auto}, шаблоны {skipped_phrases}"
+        + (f", уже в таблице {skipped_sheet}" if skipped_sheet else "")
+        + f" (всего {skipped_total} из {total_raw})"
+    )
 
     if not cards:
         summary = (
-            f"День {day_key}: карточек 0"
-            f" (Report: 0, FAQ/z-request: 0)"
-            + (f"\nУже записано ранее: {skipped}" if skipped else "")
+            f"День {day_key}: к проверке <b>0/{total_raw}</b>"
+            f"\nReport: 0 · FAQ/z-request: 0"
+            + skip_note
             + fixture_note
             + backend_note
             + force_note
@@ -237,17 +261,15 @@ async def _start_day(
         app.sessions.clear(session.chat_id)
         return
 
-    if skipped or fixture_note or backend_note or force_reload:
-        flash = (
-            f"День {day_key}: осталось {len(cards)} "
-            f"(Report: {report_n}, FAQ/z-request: {faq_n})"
-            + (f", уже записано: {skipped}" if skipped else "")
-            + fixture_note
-            + backend_note
-            + force_note
-        )
-        await _set_ui(message, session, flash)
-
+    flash = (
+        f"День {day_key}: к проверке <b>{len(cards)}/{total_raw}</b>"
+        f"\nReport: {report_n} · FAQ/z-request: {faq_n}"
+        + skip_note
+        + fixture_note
+        + backend_note
+        + force_note
+    )
+    await _set_ui(message, session, flash)
     await _show_card(message, session)
 
 
@@ -258,10 +280,10 @@ def _load_session(chat_id: int) -> ReviewSession | None:
 def _picker_caption() -> str:
     return (
         "Какой день проверить? (последние 5 дней, МСК)\n"
-        "<i>ост. N</i> — сколько ещё не проверено после последней загрузки\n"
+        "<i>ост. N</i> — сколько ещё проверить (уже без автоответов/шаблонов/записанных)\n"
         "<i>✓</i> — на последней загрузке новых не осталось\n"
         "<i>зап. N</i> — сколько вердиктов уже в таблице\n"
-        "Уже записанные ответы при обычной загрузке скрываются."
+        "Шаблоны пропуска: /skips"
     )
 
 
@@ -272,6 +294,7 @@ async def cmd_start(message: Message) -> None:
         "Источники: Report (репорт в админ-чат 2+) и FAQ/z-request (поддержка).\n"
         "В таблице колонка типа: Report или FAQ.\n\n"
         "/check — проверка дня (последние 5 дней, МСК)\n"
+        "/skips — фразы для автопропуска ответов\n"
         "/panel_status — статус сессии панели\n"
         "/panel_auth — обновить refresh (редко, раз в ~30 дней)\n\n"
         + _picker_caption(),
@@ -372,7 +395,7 @@ async def act_bad(callback: CallbackQuery) -> None:
     get_app().sessions.save(session)
     await callback.answer()
     text = (
-        _card_html(card, session.index + 1, len(session.cards))
+        _card_html(card, session)
         + f"\n\n<b>Вердикт для {_esc(card.admin_name)}</b> — выберите:"
     )
     await _set_ui(
@@ -498,7 +521,7 @@ async def pick_verdict(callback: CallbackQuery) -> None:
         await callback.answer()
         card = session.cards[session.index]
         text = (
-            _card_html(card, session.index + 1, len(session.cards))
+            _card_html(card, session)
             + f"\n\n<b>Свой вердикт для {_esc(card.admin_name)}</b>\n"
             "Пришлите текст одним сообщением."
         )

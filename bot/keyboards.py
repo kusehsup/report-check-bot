@@ -139,6 +139,31 @@ def card_actions(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def skip_phrases_keyboard(phrases: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="+ Добавить фразу",
+                callback_data="skip:add",
+            )
+        ]
+    ]
+    for phrase_id, phrase in phrases[:30]:
+        short = phrase if len(phrase) <= 36 else phrase[:33] + "…"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Удалить · {short}"[:64],
+                    callback_data=f"skip:del:{phrase_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="Закрыть", callback_data="skip:close")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def verdict_actions(*, admin_name: str = "") -> InlineKeyboardMarkup:
     who = f" · {admin_name}" if admin_name and len(admin_name) <= 20 else ""
     return InlineKeyboardMarkup(
