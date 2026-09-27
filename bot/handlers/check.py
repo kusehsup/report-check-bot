@@ -72,21 +72,11 @@ def _sync_remaining(session: ReviewSession) -> None:
     get_app().day_progress.set_remaining(session.day, left)
 
 
-def _mark_passed(session: ReviewSession, card: ReviewCard) -> None:
-    """Remember a card skipped without a bad-verdict write."""
+def _mark_ok_verdict(session: ReviewSession, card: ReviewCard) -> None:
+    """«Норм →» = вердикт «ответ нормальный» — больше не показывать."""
     if card.card_id in session.recorded_ids:
         return
     get_app().reviewed.mark(session.day, card)
-
-
-def _mark_passed_up_to(session: ReviewSession, *, inclusive_index: int) -> None:
-    end = min(inclusive_index + 1, len(session.cards))
-    cards = [
-        card
-        for card in session.cards[:end]
-        if card.card_id not in session.recorded_ids
-    ]
-    get_app().reviewed.mark_many(session.day, cards)
 
 
 async def _set_ui(
@@ -187,7 +177,7 @@ async def _start_day(
         recorded_ids=set(),
         ui_message_id=message.message_id,
     )
-    mode_note = " (перепроверка, включая уже записанные)" if force_reload else ""
+    mode_note = " (перепроверка, включая вердикты)" if force_reload else ""
     await _set_ui(
         message,
         session_stub,
@@ -231,7 +221,7 @@ async def _start_day(
             app.sessions.clear(message.chat.id)
             return
 
-    # 3) Skip cards already passed with «Дальше» / «Завершить».
+    # 3) Skip cards with OK verdict («Норм →»), unless force re-check.
     skipped_passed = 0
     if not force_reload:
         before = len(cards)
@@ -272,14 +262,14 @@ async def _start_day(
             f"\n⚠ Google Sheets не подключён — запись в {app.settings.local_sheet_path}"
         )
     force_note = (
-        "\n↺ Режим перепроверки: снова показаны записанные и ранее пропущенные."
+        "\n↺ Режим перепроверки: снова показаны ответы с вердиктом в таблице и «норм»."
         if force_reload
         else ""
     )
     skip_note = (
         f"\nПропущено: автоответ {skipped_auto}, шаблоны {skipped_phrases}"
         + (f", в таблице {skipped_sheet}" if skipped_sheet else "")
-        + (f", уже просмотрено {skipped_passed}" if skipped_passed else "")
+        + (f", вердикт «норм» {skipped_passed}" if skipped_passed else "")
         + f" (всего {skipped_total} из {total_raw})"
     )
 
@@ -316,10 +306,11 @@ def _load_session(chat_id: int) -> ReviewSession | None:
 def _picker_caption() -> str:
     return (
         "Какой день проверить? (последние 5 дней, МСК)\n"
-        "<i>ост. N</i> — сколько ещё проверить (без автоответов/шаблонов/записанных/просмотренных)\n"
+        "<i>ост. N</i> — сколько ещё без вердикта\n"
         "<i>✓</i> — на последней загрузке новых не осталось\n"
-        "<i>зап. N</i> — сколько вердиктов уже в таблице\n"
-        "«Дальше» / «Завершить» запоминают карточку как просмотренную\n"
+        "<i>зап. N</i> — плохие ответы в таблице\n"
+        "«Норм →» = вердикт «ответ нормальный» (больше не появится)\n"
+        "«Завершить» = выйти; текущая без вердикта останется в очереди\n"
         "Шаблоны пропуска: /skips"
     )
 
@@ -355,8 +346,8 @@ async def reset_menu(callback: CallbackQuery) -> None:
     await callback.message.edit_text(
         "↺ <b>Перепроверка</b>\n"
         "Выберите день: снова появятся ответы с вердиктом в таблице "
-        "и ранее пропущенные через «Дальше» / «Завершить».\n"
-        "Новый вердикт будет дописан строкой в таблицу.",
+        "и с вердиктом «норм» (кнопка «Норм →»).\n"
+        "Новый плохой вердикт будет дописан в таблицу.",
         reply_markup=_day_picker_markup(mode="reset"),
     )
 
@@ -457,13 +448,13 @@ async def act_next(callback: CallbackQuery) -> None:
         await callback.answer("Сессия не найдена. /check", show_alert=True)
         return
     if session.index < len(session.cards):
-        _mark_passed(session, session.cards[session.index])
+        _mark_ok_verdict(session, session.cards[session.index])
     session.index += 1
     session.awaiting_custom = False
     session.ui_message_id = callback.message.message_id
     get_app().sessions.save(session)
     _sync_remaining(session)
-    await callback.answer()
+    await callback.answer("Норм")
     await _show_card(callback.message, session)
 
 
@@ -492,13 +483,10 @@ async def act_finish(callback: CallbackQuery) -> None:
     if session is None:
         await callback.answer("Сессии нет")
         return
-    # Current card (and any earlier ones without a verdict) count as reviewed.
-    if session.cards:
-        _mark_passed_up_to(session, inclusive_index=session.index)
+    # «Завершить» не ставит вердикт на текущую карточку — она останется в очереди.
     total = len(session.cards)
     written = session.written
-    # Remaining after finish: cards after the current one still unchecked.
-    still_left = max(0, total - session.index - 1)
+    still_left = max(0, total - session.index)
     app.day_progress.set_remaining(session.day, still_left)
     session.ui_message_id = callback.message.message_id
     await callback.answer()
@@ -508,10 +496,10 @@ async def act_finish(callback: CallbackQuery) -> None:
         (
             f"Проверка остановлена.\n"
             f"В этой сессии карточек: {total}\n"
-            f"Записано вердиктов: {written}\n"
-            f"Текущая и просмотренные сохранены как пропущенные "
-            f"(не покажутся при новой загрузке дня).\n"
-            f"Ещё останется после перезагрузки ≈ {still_left}."
+            f"Плохих вердиктов в таблицу: {written}\n"
+            f"Текущая карточка без вердикта — при новой загрузке дня появится снова.\n"
+            f"«Норм →» = вердикт «норм», такие уже не вернутся.\n"
+            f"Останется без вердикта ≈ {still_left}."
         ),
         reply_markup=_day_picker_markup(),
     )

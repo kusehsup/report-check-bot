@@ -14,7 +14,7 @@ def _key_hash(card: ReviewCard) -> str:
 
 
 class ReviewedStore:
-    """Persist cards passed with «Дальше» / «Завершить» without a bad verdict."""
+    """Persist OK verdicts from the «Норм →» button (answer is fine)."""
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path

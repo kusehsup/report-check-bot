@@ -131,7 +131,8 @@ def card_actions(
     nav: list[InlineKeyboardButton] = []
     if can_back:
         nav.append(InlineKeyboardButton(text="← Назад", callback_data="act:prev"))
-    nav.append(InlineKeyboardButton(text="Дальше →", callback_data="act:next"))
+    # «Дальше» = вердикт «ответ нормальный», не просто навигация.
+    nav.append(InlineKeyboardButton(text="Норм →", callback_data="act:next"))
     rows.append(nav)
     rows.append(
         [InlineKeyboardButton(text="Завершить", callback_data="act:finish")]
