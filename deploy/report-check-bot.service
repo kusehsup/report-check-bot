@@ -1,0 +1,20 @@
+[Unit]
+Description=Report Check Telegram Bot (admin answer review)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/report-check-bot
+EnvironmentFile=/opt/report-check-bot/.env
+ExecStart=/opt/report-check-bot/.venv/bin/python -m bot
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
