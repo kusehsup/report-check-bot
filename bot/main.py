@@ -13,6 +13,7 @@ from bot.config import Settings, get_settings
 from bot.context import AppContext, set_app
 from bot.handlers import router
 from bot.middlewares import AccessMiddleware
+from bot.services.day_progress import DayProgressStore
 from bot.services.local_sheet import LocalSheetStore
 from bot.services.panel import PanelAuthError, PanelClient
 from bot.services.panel_session import PanelSessionStore
@@ -67,6 +68,7 @@ def build_context(settings: Settings) -> AppContext:
         panel=panel,
         sheets=sheets,
         sessions=SessionStore(settings.session_db),
+        day_progress=DayProgressStore(settings.session_db),
         sheet_backend=sheet_backend,
     )
 

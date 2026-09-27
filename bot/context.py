@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 from bot.config import Settings
 from bot.models import ReviewCard
+from bot.services.day_progress import DayProgressStore
 from bot.services.panel import PanelClient
 from bot.services.session import SessionStore
 
@@ -14,6 +15,8 @@ class SheetStore(Protocol):
 
     def append_verdict(self, card: ReviewCard, verdict: str) -> None: ...
 
+    def written_counts_by_date(self) -> dict[str, int]: ...
+
 
 @dataclass
 class AppContext:
@@ -21,6 +24,7 @@ class AppContext:
     panel: PanelClient
     sheets: SheetStore | None
     sessions: SessionStore
+    day_progress: DayProgressStore
     sheet_backend: str = "none"
 
 

@@ -60,6 +60,16 @@ class LocalSheetStore:
         existing = self.existing_keys()
         return [card for card in cards if card.dedupe_key() not in existing]
 
+    def written_counts_by_date(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in self.read_all_rows()[1:]:
+            if len(row) < 5 or not str(row[0]).strip():
+                continue
+            day = str(row[0]).strip()[:10]
+            if len(day) == 10 and day[4] == "-" and day[7] == "-":
+                counts[day] = counts.get(day, 0) + 1
+        return counts
+
     def append_verdict(self, card: ReviewCard, verdict: str) -> None:
         with self.path.open("a", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)

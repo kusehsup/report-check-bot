@@ -4,6 +4,7 @@ from datetime import date
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot.services.day_progress import DayProgress
 from bot.services.panel import moscow_recent_days, moscow_today
 
 _WEEKDAYS_RU = (
@@ -17,7 +18,7 @@ _WEEKDAYS_RU = (
 )
 
 
-def _day_button_label(day: date, *, today: date) -> str:
+def _day_base_label(day: date, *, today: date) -> str:
     delta = (today - day).days
     stamp = day.strftime("%d.%m")
     weekday = _WEEKDAYS_RU[day.weekday()]
@@ -28,25 +29,73 @@ def _day_button_label(day: date, *, today: date) -> str:
     return f"{weekday} · {stamp}"
 
 
-def day_picker(*, days: int = 5) -> InlineKeyboardMarkup:
-    """Inline buttons for the last N Moscow calendar days (newest first)."""
+def _day_status_suffix(
+    day_key: str,
+    *,
+    progress: DayProgress | None,
+    written: int,
+) -> str:
+    if progress is not None:
+        if progress.last_remaining <= 0 and progress.last_total > 0:
+            return " · ✓"
+        if progress.last_remaining > 0:
+            return f" · ост. {progress.last_remaining}"
+    if written > 0:
+        return f" · зап. {written}"
+    return ""
+
+
+def day_picker(
+    *,
+    days: int = 5,
+    progress_by_day: dict[str, DayProgress] | None = None,
+    written_by_day: dict[str, int] | None = None,
+    mode: str = "check",
+) -> InlineKeyboardMarkup:
+    """
+    mode=check → day:YYYY-MM-DD
+    mode=reset → resetday:YYYY-MM-DD (force re-review, ignore sheet dedupe once)
+    """
     today = moscow_today()
     recent = moscow_recent_days(days)
+    progress_by_day = progress_by_day or {}
+    written_by_day = written_by_day or {}
+    prefix = "resetday" if mode == "reset" else "day"
+
     rows: list[list[InlineKeyboardButton]] = []
-    # Two buttons per row for compact picker.
-    row: list[InlineKeyboardButton] = []
     for day in recent:
-        row.append(
-            InlineKeyboardButton(
-                text=_day_button_label(day, today=today),
-                callback_data=f"day:{day.isoformat()}",
+        key = day.isoformat()
+        label = _day_base_label(day, today=today)
+        if mode == "check":
+            label += _day_status_suffix(
+                key,
+                progress=progress_by_day.get(key),
+                written=written_by_day.get(key, 0),
             )
+        else:
+            label = f"↺ {label}"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label[:64],
+                    callback_data=f"{prefix}:{key}",
+                )
+            ]
         )
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
+
+    if mode == "check":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="↺ Сбросить день и перепроверить",
+                    callback_data="reset:menu",
+                )
+            ]
+        )
+    else:
+        rows.append(
+            [InlineKeyboardButton(text="← Назад к дням", callback_data="reset:cancel")]
+        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

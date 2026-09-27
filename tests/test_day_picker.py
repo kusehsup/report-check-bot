@@ -20,12 +20,16 @@ def test_day_picker_five_iso_callbacks() -> None:
         btn.callback_data
         for row in markup.inline_keyboard
         for btn in row
+        if (btn.callback_data or "").startswith("day:")
     ]
     assert len(callbacks) == 5
     expected = {f"day:{d.isoformat()}" for d in moscow_recent_days(5)}
     assert set(callbacks) == expected
-    labels = [btn.text for row in markup.inline_keyboard for btn in row]
+    labels = [
+        btn.text
+        for row in markup.inline_keyboard
+        for btn in row
+        if (btn.callback_data or "").startswith("day:")
+    ]
     assert any(text.startswith("Сегодня") for text in labels)
     assert any(text.startswith("Вчера") for text in labels)
-    # Remaining three use weekday · dd.mm
-    assert sum("·" in text for text in labels) == 5

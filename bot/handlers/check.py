@@ -29,6 +29,33 @@ def _card_html(card: ReviewCard, index: int, total: int) -> str:
     return format_card_html(card, index, total)
 
 
+def _day_picker_markup(*, mode: str = "check") -> InlineKeyboardMarkup:
+    app = get_app()
+    days = [d.isoformat() for d in moscow_recent_days(5)]
+    progress = app.day_progress.all_for_days(days)
+    written: dict[str, int] = {}
+    if app.sheets is not None:
+        try:
+            written = app.sheets.written_counts_by_date()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to read written counts from sheet")
+    return day_picker(
+        progress_by_day=progress,
+        written_by_day=written,
+        mode=mode,
+    )
+
+
+def _sync_remaining(session: ReviewSession) -> None:
+    """Update day progress from the live session position."""
+    left = sum(
+        1
+        for i, card in enumerate(session.cards)
+        if i >= session.index and card.card_id not in session.recorded_ids
+    )
+    get_app().day_progress.set_remaining(session.day, left)
+
+
 async def _set_ui(
     message: Message,
     session: ReviewSession,
@@ -72,18 +99,27 @@ async def _show_card(message: Message, session: ReviewSession) -> None:
     app = get_app()
     total = len(session.cards)
     if total == 0:
-        await _set_ui(message, session, "За выбранный день ответов для проверки нет.")
+        app.day_progress.save_load(session.day, total=0, remaining=0)
+        await _set_ui(
+            message,
+            session,
+            "За выбранный день ответов для проверки нет.",
+            reply_markup=_day_picker_markup(),
+        )
         app.sessions.clear(session.chat_id)
         return
     if session.index >= total:
+        app.day_progress.save_load(session.day, total=total, remaining=0)
         await _set_ui(
             message,
             session,
             f"Готово.\nПросмотрено: {total}\nЗаписано в таблицу: {session.written}",
+            reply_markup=_day_picker_markup(),
         )
         app.sessions.clear(session.chat_id)
         return
 
+    _sync_remaining(session)
     card = session.cards[session.index]
     recorded = card.card_id in session.recorded_ids
     text = _card_html(card, session.index + 1, total)
@@ -99,12 +135,18 @@ async def _show_card(message: Message, session: ReviewSession) -> None:
     )
 
 
-async def _start_day(message: Message, day: date) -> None:
+async def _start_day(
+    message: Message,
+    day: date,
+    *,
+    force_reload: bool = False,
+) -> None:
     app = get_app()
+    day_key = day.isoformat()
     # Reuse the day-picker message as the single UI surface.
     session_stub = ReviewSession(
         chat_id=message.chat.id,
-        day=day.isoformat(),
+        day=day_key,
         index=0,
         written=0,
         awaiting_custom=False,
@@ -112,7 +154,12 @@ async def _start_day(message: Message, day: date) -> None:
         recorded_ids=set(),
         ui_message_id=message.message_id,
     )
-    await _set_ui(message, session_stub, f"Загружаю логи за {day.isoformat()}…")
+    mode_note = " (перепроверка, включая уже записанные)" if force_reload else ""
+    await _set_ui(
+        message,
+        session_stub,
+        f"Загружаю логи за {day_key}…{mode_note}",
+    )
 
     try:
         cards = await app.panel.fetch_day_cards(day)
@@ -126,8 +173,9 @@ async def _start_day(message: Message, day: date) -> None:
         app.sessions.clear(message.chat.id)
         return
 
+    total_raw = len(cards)
     skipped = 0
-    if app.sheets is not None:
+    if app.sheets is not None and not force_reload:
         try:
             before = len(cards)
             cards = app.sheets.filter_new_cards(cards)
@@ -142,12 +190,14 @@ async def _start_day(message: Message, day: date) -> None:
             app.sessions.clear(message.chat.id)
             return
 
+    app.day_progress.save_load(day_key, total=total_raw, remaining=len(cards))
+
     report_n = sum(1 for c in cards if c.answer_type == "Report")
     faq_n = sum(1 for c in cards if c.answer_type == "FAQ")
 
     session = ReviewSession(
         chat_id=message.chat.id,
-        day=day.isoformat(),
+        day=day_key,
         index=0,
         written=0,
         awaiting_custom=False,
@@ -167,30 +217,34 @@ async def _start_day(message: Message, day: date) -> None:
         backend_note = (
             f"\n⚠ Google Sheets не подключён — запись в {app.settings.local_sheet_path}"
         )
+    force_note = (
+        "\n↺ Режим перепроверки: уже записанные ответы снова в списке."
+        if force_reload
+        else ""
+    )
 
     if not cards:
         summary = (
-            f"День {day.isoformat()}: карточек 0"
+            f"День {day_key}: карточек 0"
             f" (Report: 0, FAQ/z-request: 0)"
-            + (f"\nПропущено уже записанных: {skipped}" if skipped else "")
+            + (f"\nУже записано ранее: {skipped}" if skipped else "")
             + fixture_note
             + backend_note
-            + "\n\nОтветов для проверки нет."
+            + force_note
+            + "\n\nНовых ответов для проверки нет."
         )
-        await _set_ui(message, session, summary)
+        await _set_ui(message, session, summary, reply_markup=_day_picker_markup())
         app.sessions.clear(session.chat_id)
         return
 
-    # First paint is the card itself; counts stay in the header of each card.
-    # Log a one-line prefix only when useful (skips / warnings).
-    if skipped or fixture_note or backend_note:
-        # Brief flash then card — still one message.
+    if skipped or fixture_note or backend_note or force_reload:
         flash = (
-            f"День {day.isoformat()}: {len(cards)} "
+            f"День {day_key}: осталось {len(cards)} "
             f"(Report: {report_n}, FAQ/z-request: {faq_n})"
-            + (f", пропущено записанных: {skipped}" if skipped else "")
+            + (f", уже записано: {skipped}" if skipped else "")
             + fixture_note
             + backend_note
+            + force_note
         )
         await _set_ui(message, session, flash)
 
@@ -201,6 +255,16 @@ def _load_session(chat_id: int) -> ReviewSession | None:
     return get_app().sessions.get(chat_id)
 
 
+def _picker_caption() -> str:
+    return (
+        "Какой день проверить? (последние 5 дней, МСК)\n"
+        "<i>ост. N</i> — сколько ещё не проверено после последней загрузки\n"
+        "<i>✓</i> — на последней загрузке новых не осталось\n"
+        "<i>зап. N</i> — сколько вердиктов уже в таблице\n"
+        "Уже записанные ответы при обычной загрузке скрываются."
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
@@ -209,17 +273,58 @@ async def cmd_start(message: Message) -> None:
         "В таблице колонка типа: Report или FAQ.\n\n"
         "/check — проверка дня (последние 5 дней, МСК)\n"
         "/panel_status — статус сессии панели\n"
-        "/panel_auth — обновить refresh (редко, раз в ~30 дней)",
-        reply_markup=day_picker(),
+        "/panel_auth — обновить refresh (редко, раз в ~30 дней)\n\n"
+        + _picker_caption(),
+        reply_markup=_day_picker_markup(),
     )
 
 
 @router.message(Command("check"))
 async def cmd_check(message: Message) -> None:
     await message.answer(
-        "Какой день проверить? (последние 5 дней, МСК)",
-        reply_markup=day_picker(),
+        _picker_caption(),
+        reply_markup=_day_picker_markup(),
     )
+
+
+@router.callback_query(F.data == "reset:menu")
+async def reset_menu(callback: CallbackQuery) -> None:
+    if not callback.message:
+        return
+    await callback.answer()
+    await callback.message.edit_text(
+        "↺ <b>Перепроверка</b>\n"
+        "Выберите день: ответы снова появятся, даже если вердикт уже есть в таблице.\n"
+        "Новый вердикт будет дописан строкой в таблицу.",
+        reply_markup=_day_picker_markup(mode="reset"),
+    )
+
+
+@router.callback_query(F.data == "reset:cancel")
+async def reset_cancel(callback: CallbackQuery) -> None:
+    if not callback.message:
+        return
+    await callback.answer()
+    await callback.message.edit_text(
+        _picker_caption(),
+        reply_markup=_day_picker_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("resetday:"))
+async def reset_day(callback: CallbackQuery) -> None:
+    if not callback.message or not callback.data:
+        return
+    raw = callback.data.split(":", 1)[1].strip()
+    allowed = {d.isoformat() for d in moscow_recent_days(5)}
+    if raw not in allowed:
+        await callback.answer("Можно выбрать только из последних 5 дней", show_alert=True)
+        return
+    app = get_app()
+    app.day_progress.mark_force_reload(raw)
+    app.sessions.clear(callback.message.chat.id)
+    await callback.answer("Сброс: день загрузится целиком")
+    await _start_day(callback.message, date.fromisoformat(raw), force_reload=True)
 
 
 @router.callback_query(F.data.startswith("day:"))
@@ -239,7 +344,7 @@ async def pick_day(callback: CallbackQuery) -> None:
         return
     day = date.fromisoformat(raw)
     await callback.answer()
-    await _start_day(callback.message, day)
+    await _start_day(callback.message, day, force_reload=False)
 
 
 @router.callback_query(F.data == "act:noop")
@@ -321,12 +426,14 @@ async def act_finish(callback: CallbackQuery) -> None:
         return
     total = len(session.cards)
     written = session.written
+    _sync_remaining(session)
     session.ui_message_id = callback.message.message_id
     await callback.answer()
     await _set_ui(
         callback.message,
         session,
         f"Проверка остановлена.\nКарточек: {total}\nЗаписано: {written}",
+        reply_markup=_day_picker_markup(),
     )
     app.sessions.clear(session.chat_id)
 
@@ -364,6 +471,7 @@ async def _write_verdict(message: Message, session: ReviewSession, verdict: str)
     session.awaiting_custom = False
     session.index += 1
     app.sessions.save(session)
+    _sync_remaining(session)
     await _show_card(message, session)
 
 
