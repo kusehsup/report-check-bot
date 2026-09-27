@@ -14,13 +14,22 @@ def day_picker() -> InlineKeyboardMarkup:
     )
 
 
-def card_actions(*, can_back: bool, recorded: bool) -> InlineKeyboardMarkup:
+def card_actions(
+    *,
+    can_back: bool,
+    recorded: bool,
+    admin_name: str = "",
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if not recorded:
+        label = "Плохой ответ"
+        if admin_name:
+            short = admin_name if len(admin_name) <= 28 else admin_name[:27] + "…"
+            label = f"Плохой ответ · {short}"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="Плохой ответ",
+                    text=label[:64],
                     callback_data="act:bad",
                 )
             ]
@@ -36,8 +45,8 @@ def card_actions(*, can_back: bool, recorded: bool) -> InlineKeyboardMarkup:
         )
     nav: list[InlineKeyboardButton] = []
     if can_back:
-        nav.append(InlineKeyboardButton(text="Назад", callback_data="act:prev"))
-    nav.append(InlineKeyboardButton(text="Дальше", callback_data="act:next"))
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data="act:prev"))
+    nav.append(InlineKeyboardButton(text="Дальше →", callback_data="act:next"))
     rows.append(nav)
     rows.append(
         [InlineKeyboardButton(text="Завершить", callback_data="act:finish")]
@@ -45,24 +54,25 @@ def card_actions(*, can_back: bool, recorded: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def verdict_actions() -> InlineKeyboardMarkup:
+def verdict_actions(*, admin_name: str = "") -> InlineKeyboardMarkup:
+    who = f" · {admin_name}" if admin_name and len(admin_name) <= 20 else ""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Устная беседа",
+                    text=f"Устная беседа{who}"[:64],
                     callback_data="verdict:Устная беседа",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Предупреждение",
+                    text=f"Предупреждение{who}"[:64],
                     callback_data="verdict:Предупреждение",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Выговор",
+                    text=f"Выговор{who}"[:64],
                     callback_data="verdict:Выговор",
                 )
             ],

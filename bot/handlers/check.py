@@ -12,7 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from bot.context import get_app
 from bot.keyboards import card_actions, day_picker, verdict_actions
 from bot.models import ReviewCard
-from bot.services.normalize import format_card_text
+from bot.services.normalize import format_card_html
 from bot.services.panel import PanelAuthError, moscow_today, moscow_yesterday
 from bot.services.session import ReviewSession
 from bot.services.sheets import SheetsError
@@ -26,7 +26,7 @@ def _esc(value: object) -> str:
 
 
 def _card_html(card: ReviewCard, index: int, total: int) -> str:
-    return f"<pre>{_esc(format_card_text(card, index, total))}</pre>"
+    return format_card_html(card, index, total)
 
 
 async def _set_ui(
@@ -94,6 +94,7 @@ async def _show_card(message: Message, session: ReviewSession) -> None:
         reply_markup=card_actions(
             can_back=session.index > 0,
             recorded=recorded,
+            admin_name=card.admin_name,
         ),
     )
 
@@ -258,9 +259,14 @@ async def act_bad(callback: CallbackQuery) -> None:
     await callback.answer()
     text = (
         _card_html(card, session.index + 1, len(session.cards))
-        + "\n\nВыберите вердикт:"
+        + f"\n\n<b>Вердикт для {_esc(card.admin_name)}</b> — выберите:"
     )
-    await _set_ui(callback.message, session, text, reply_markup=verdict_actions())
+    await _set_ui(
+        callback.message,
+        session,
+        text,
+        reply_markup=verdict_actions(admin_name=card.admin_name),
+    )
 
 
 @router.callback_query(F.data == "act:next")
@@ -376,9 +382,15 @@ async def pick_verdict(callback: CallbackQuery) -> None:
         card = session.cards[session.index]
         text = (
             _card_html(card, session.index + 1, len(session.cards))
-            + "\n\nПришлите текст вердикта одним сообщением."
+            + f"\n\n<b>Свой вердикт для {_esc(card.admin_name)}</b>\n"
+            "Пришлите текст одним сообщением."
         )
-        await _set_ui(callback.message, session, text, reply_markup=verdict_actions())
+        await _set_ui(
+            callback.message,
+            session,
+            text,
+            reply_markup=verdict_actions(admin_name=card.admin_name),
+        )
         return
 
     await callback.answer()
@@ -393,11 +405,14 @@ async def custom_verdict_text(message: Message) -> None:
         return
     text = (message.text or "").strip()
     if not text:
+        admin = ""
+        if session.index < len(session.cards):
+            admin = session.cards[session.index].admin_name
         await _set_ui(
             message,
             session,
             "Пустой вердикт. Пришлите текст или нажмите «Отмена».",
-            reply_markup=verdict_actions(),
+            reply_markup=verdict_actions(admin_name=admin),
         )
         return
     # Prefer deleting the user's verdict text to keep the chat clean.

@@ -690,8 +690,8 @@ def merge_and_sort(report_cards: list[ReviewCard], faq_cards: list[ReviewCard]) 
 
 
 _TYPE_LABELS = {
-    "Report": "Report · репорт (админ-чат 2+)",
-    "FAQ": "FAQ · z-request (поддержка)",
+    "Report": "Report · репорт",
+    "FAQ": "FAQ · z-request",
 }
 
 
@@ -714,82 +714,114 @@ def _clip(text: str, limit: int = 220) -> str:
     return flat[: limit - 3] + "..."
 
 
-def format_card_text(card: ReviewCard, index: int, total: int) -> str:
-    lines = [
-        f"{type_label(card.answer_type)} · {index}/{total}",
-        card.answered_at,
+def _is_current_line(card: ReviewCard, line: DialogueLine) -> bool:
+    if line.role != "agent":
+        return False
+    if line.name != card.admin_name or line.text != card.answer:
+        return False
+    if not card.answered_at or not line.at:
+        return True
+    return line.at == card.answered_at
+
+
+def _dialogue_window(card: ReviewCard, *, max_lines: int = 14) -> list[DialogueLine]:
+    dialogue = card.dialogue
+    if len(dialogue) <= max_lines:
+        return dialogue
+
+    current_idx = next(
+        (i for i, line in enumerate(dialogue) if _is_current_line(card, line)),
+        None,
+    )
+    if current_idx is None:
+        return dialogue[:1] + dialogue[-(max_lines - 1) :]
+
+    start = max(1, current_idx - 5)
+    end = min(len(dialogue), current_idx + 3)
+    window = [dialogue[0]]
+    if start > 1:
+        window.append(DialogueLine(role="player", name="…", text="…", at=""))
+    window.extend(dialogue[start:end])
+    return window
+
+
+def format_card_html(card: ReviewCard, index: int, total: int) -> str:
+    """Telegram HTML card: clear focus on the agent answer under review."""
+    import html as html_mod
+
+    esc = html_mod.escape
+    role_who = "агента" if card.answer_type == "FAQ" else "админа"
+    siblings_n = len(card.sibling_replies)
+
+    parts: list[str] = [
+        f"<b>{esc(type_label(card.answer_type))}</b>",
+        f"<code>{index}/{total}</code> · <code>{esc(card.answered_at)}</code>",
         "",
-        f"Игрок: {card.player_name} [{card.player_id}]",
+        f"Игрок <b>{esc(card.player_name)}</b> · <code>{esc(card.player_id)}</code>",
         "",
-        f">>> Проверяется ответ агента: {card.admin_name}",
-        f">>> {_clip(card.answer, 280)}",
-        "",
+        f"<b>Проверяемый ответ {role_who}</b>",
+        f"<b>{esc(card.admin_name)}</b>",
+        f"<blockquote>{esc(_clip(card.answer, 400))}</blockquote>",
     ]
 
     if card.dialogue:
-        lines.append("Диалог:")
-        # Prefer full dialogue; if huge, keep opener + window around current answer.
-        dialogue = card.dialogue
-        max_lines = 16
-        if len(dialogue) > max_lines:
-            current_idx = None
-            for i, line in enumerate(dialogue):
-                if (
-                    line.role == "agent"
-                    and line.name == card.admin_name
-                    and line.text == card.answer
-                    and (not card.answered_at or line.at == card.answered_at or not line.at)
-                ):
-                    current_idx = i
-                    break
-            if current_idx is None:
-                for i, line in enumerate(dialogue):
-                    if (
-                        line.role == "agent"
-                        and line.name == card.admin_name
-                        and line.text == card.answer
-                    ):
-                        current_idx = i
-                        break
-            if current_idx is None:
-                dialogue = dialogue[:1] + dialogue[-(max_lines - 1) :]
-            else:
-                start = max(1, current_idx - 6)
-                end = min(len(card.dialogue), current_idx + 3)
-                dialogue = [card.dialogue[0]]
-                if start > 1:
-                    dialogue.append(
-                        DialogueLine(role="player", name="…", text="…", at="")
-                    )
-                dialogue.extend(card.dialogue[start:end])
-
-        for line in dialogue:
+        parts.extend(["", "<b>Диалог</b>"])
+        for line in _dialogue_window(card):
             if line.name == "…" and line.text == "…":
-                lines.append("  …")
+                parts.append("<i>…</i>")
                 continue
-            role = "Игрок" if line.role == "player" else "Агент"
             stamp = _short_time(line.at)
-            prefix = f"[{stamp}] " if stamp else ""
-            marker = ""
-            if (
-                line.role == "agent"
-                and line.name == card.admin_name
-                and line.text == card.answer
-            ):
-                marker = "  ← этот ответ"
-            lines.append(f"{prefix}{role} {line.name}:{marker}")
-            lines.append(f"  {_clip(line.text)}")
+            time_bit = f"<code>{esc(stamp)}</code> " if stamp else ""
+            if line.role == "player":
+                parts.append(
+                    f"{time_bit}<i>игрок</i> <b>{esc(line.name)}</b>"
+                )
+                parts.append(esc(_clip(line.text)))
+            else:
+                current = _is_current_line(card, line)
+                mark = " · <u>проверяется</u>" if current else ""
+                parts.append(
+                    f"{time_bit}<b>агент {esc(line.name)}</b>{mark}"
+                )
+                body = esc(_clip(line.text))
+                if current:
+                    parts.append(f"<blockquote>{body}</blockquote>")
+                else:
+                    parts.append(body)
     else:
-        lines.append(f"Вопрос: {card.question}")
-        lines.append("")
-        lines.append(f"Ответ: {card.admin_name}")
-        lines.append(card.answer)
+        parts.extend(
+            [
+                "",
+                "<b>Вопрос</b>",
+                esc(_clip(card.question, 400)),
+            ]
+        )
 
-    if card.sibling_replies:
-        lines.append("")
-        lines.append("Другие ответы агентов (отдельные карточки):")
-        for reply in card.sibling_replies[:8]:
-            stamp = _short_time(reply.answered_at)
-            when = f" · {stamp}" if stamp else ""
-            lines.append(f"• {reply.admin_name}{when} — {_clip(reply.text, 70)}")
-    return "\n".join(lines)
+    if siblings_n:
+        if siblings_n == 1:
+            more = f"ещё 1 ответ {role_who}"
+        elif siblings_n < 5:
+            more = f"ещё {siblings_n} ответа {role_who}"
+        else:
+            more = f"ещё {siblings_n} ответов {role_who}"
+        # role_who is genitive singular ("агента"/"админа"); for 2+ use plural.
+        if siblings_n > 1:
+            more = more.replace("агента", "агентов").replace("админа", "админов")
+        parts.extend(
+            [
+                "",
+                f"<i>В этом треде {more} — отдельные карточки (Назад / Дальше)</i>",
+            ]
+        )
+
+    return "\n".join(parts)
+
+
+def format_card_text(card: ReviewCard, index: int, total: int) -> str:
+    """Plain-text card (tests / logs). Same structure as HTML without tags."""
+    import re
+
+    html = format_card_html(card, index, total)
+    text = html.replace("<blockquote>", "«").replace("</blockquote>", "»")
+    text = re.sub(r"<[^>]+>", "", text)
+    return text

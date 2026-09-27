@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from bot.services.normalize import (
+    format_card_html,
     format_card_text,
     merge_and_sort,
     normalize_payload,
@@ -66,15 +67,21 @@ def test_faq_multi_agent_dialogue_skips_player_replies() -> None:
     assert artem.sheet_row("Выговор")[4].startswith("нужна бронепластина")
     assert daniel_case.sheet_row("Выговор")[2] == "Daniel_Shevch"
 
+    html = format_card_html(daniel_case, 1, len(cards))
+    assert "Проверяемый ответ агента" in html
+    assert "<b>Daniel_Shevch</b>" in html
+    assert "<blockquote>Только открытие кейс</blockquote>" in html
+    assert "<i>игрок</i>" in html
+    assert "<b>агент Artem_Bariga</b>" in html
+    assert "проверяется" in html
+    assert "отдельные карточки" in html
+    # No monospace dump / no player as agent sibling bullets
+    assert "<pre>" not in html
+    assert "• Vova_Beloysov" not in html
+
     text = format_card_text(daniel_case, 1, len(cards))
-    assert "Проверяется ответ агента: Daniel_Shevch" in text
-    assert "Игрок Vova_Beloysov" in text
-    assert "Агент Artem_Bariga" in text
-    assert "Агент Daniel_Shevch" in text
-    assert "← этот ответ" in text
-    assert "Другие ответы агентов" in text
-    # Player lines must not be listed as agent siblings
-    assert "• Vova_Beloysov" not in text
+    assert "Daniel_Shevch" in text
+    assert "Только открытие кейс" in text
 
 
 def test_merge_sort_and_format() -> None:
@@ -88,12 +95,11 @@ def test_merge_sort_and_format() -> None:
     )
     merged = merge_and_sort(report, faq)
     assert merged[0].answered_at >= merged[-1].answered_at
-    text = format_card_text(merged[0], 1, len(merged))
-    assert "· 1/" in text
-    assert "Проверяется ответ агента:" in text or "Ответ:" in text
-    assert "Диалог:" in text or "Вопрос:" in text
-    # Telegram labels clarify source; sheet still stores Report|FAQ.
-    assert "Report · репорт" in text or "FAQ · z-request" in text
+    html = format_card_html(merged[0], 1, len(merged))
+    assert "1/" in html
+    assert "Проверяемый ответ" in html
+    assert "<blockquote>" in html
+    assert "Report · репорт" in html or "FAQ · z-request" in html
 
 
 def test_sheet_row() -> None:
