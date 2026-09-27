@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     )
 
     data_dir: Path = Field(default=Path("./data"), validation_alias=AliasChoices("DATA_DIR"))
+    panel_fixture_dir: str = Field(
+        default="",
+        validation_alias=AliasChoices("PANEL_FIXTURE_DIR"),
+    )
+    prefer_fixtures: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("PANEL_PREFER_FIXTURES"),
+    )
+    use_local_sheet: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("USE_LOCAL_SHEET"),
+    )
 
     @field_validator("admin_ids", mode="before")
     @classmethod
@@ -77,8 +89,19 @@ class Settings(BaseSettings):
             return []
         return [int(part.strip()) for part in text.split(",") if part.strip()]
 
+    @field_validator("prefer_fixtures", "use_local_sheet", mode="before")
+    @classmethod
+    def parse_bool(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None or value == "":
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
     @model_validator(mode="after")
     def require_panel_auth(self) -> Settings:
+        if self.panel_fixture_dir.strip():
+            return self
         if not self.panel_refresh_token and not self.panel_access_token:
             raise ValueError(
                 "Set PANEL_REFRESH_NOW (preferred) or PANEL_ACCESS_NOW"
@@ -88,6 +111,10 @@ class Settings(BaseSettings):
     @property
     def session_db(self) -> Path:
         return self.data_dir / "sessions.db"
+
+    @property
+    def local_sheet_path(self) -> Path:
+        return self.data_dir / "sheet-mirror.csv"
 
     def has_google_credentials(self) -> bool:
         if self.google_service_account_json.strip():

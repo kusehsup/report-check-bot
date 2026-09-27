@@ -77,12 +77,6 @@ async def _start_day(message: Message, day: date) -> None:
             logger.exception("Failed to read spreadsheet")
             await status.edit_text(f"Ошибка чтения таблицы: {_esc(exc)}")
             return
-    else:
-        await status.edit_text(
-            "Предупреждение: Google Sheets не настроен "
-            "(SERVICE_ACCOUNT_PATH / GOOGLE_SERVICE_ACCOUNT_JSON). "
-            "Карточки покажу, запись в таблицу будет недоступна."
-        )
 
     session = ReviewSession(
         chat_id=message.chat.id,
@@ -95,9 +89,21 @@ async def _start_day(message: Message, day: date) -> None:
     )
     app.sessions.save(session)
 
+    fixture_note = ""
+    if app.panel.used_fixtures:
+        fixture_note = (
+            "\n⚠ Логи панели с этого IP недоступны (403) — показаны тестовые фикстуры."
+        )
+    backend_note = ""
+    if app.sheet_backend == "local_csv":
+        backend_note = (
+            f"\n⚠ Google Sheets не подключён — запись в {app.settings.local_sheet_path}"
+        )
     summary = (
         f"День {day.isoformat()}: карточек {len(cards)}"
         + (f" (пропущено уже записанных: {skipped})" if skipped else "")
+        + fixture_note
+        + backend_note
     )
     try:
         await status.edit_text(summary)
