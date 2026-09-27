@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, Filter
 from aiogram.types import CallbackQuery, Message
 
 from bot.context import get_app
@@ -11,6 +11,21 @@ from bot.keyboards import skip_phrases_keyboard
 from bot.services.skip_rules import ALWAYS_SKIP_ADMIN_NAMES
 
 router = Router(name="skips")
+
+
+class AwaitingSkipAdd(Filter):
+    """Only catch free-text while waiting for a new skip phrase."""
+
+    async def __call__(self, message: Message) -> bool:
+        if not message.text or message.text.startswith("/"):
+            return False
+        app = get_app()
+        if not app.skip_rules.is_awaiting_add(message.chat.id):
+            return False
+        session = app.sessions.get(message.chat.id)
+        if session is not None and session.awaiting_custom:
+            return False
+        return True
 
 
 def _esc(value: object) -> str:
@@ -128,18 +143,10 @@ async def skip_del_cb(callback: CallbackQuery) -> None:
         await callback.message.answer(_skips_text(), reply_markup=_skips_markup())
 
 
-@router.message(F.text)
+@router.message(F.text, AwaitingSkipAdd())
 async def skip_add_text(message: Message) -> None:
     app = get_app()
-    if not app.skip_rules.is_awaiting_add(message.chat.id):
-        return
-    # Let custom verdict / panel auth win when those flows are active.
-    session = app.sessions.get(message.chat.id)
-    if session is not None and session.awaiting_custom:
-        return
     text = (message.text or "").strip()
-    if text.startswith("/"):
-        return
     ok, detail = app.skip_rules.add_phrase(text)
     app.skip_rules.set_awaiting_add(message.chat.id, False)
     if ok:

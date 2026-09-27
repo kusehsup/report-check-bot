@@ -6,7 +6,7 @@ from datetime import date
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, Filter
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from bot.context import get_app
@@ -19,6 +19,16 @@ from bot.services.sheets import SheetsError
 
 logger = logging.getLogger(__name__)
 router = Router(name="check")
+
+
+class AwaitingCustomVerdict(Filter):
+    """Only catch free-text while waiting for a custom verdict."""
+
+    async def __call__(self, message: Message) -> bool:
+        if not message.text or message.text.startswith("/"):
+            return False
+        session = get_app().sessions.get(message.chat.id)
+        return bool(session and session.awaiting_custom)
 
 
 def _esc(value: object) -> str:
@@ -537,7 +547,7 @@ async def pick_verdict(callback: CallbackQuery) -> None:
     await _write_verdict(callback.message, session, value)
 
 
-@router.message(F.text)
+@router.message(F.text, AwaitingCustomVerdict())
 async def custom_verdict_text(message: Message) -> None:
     # JWT pastes are handled by panel_auth router first.
     session = _load_session(message.chat.id)
